@@ -35,6 +35,8 @@
 #define IDC_UPDATE_BUTTON 1024
 
 
+
+
 #define IDC_STRENGTH_LABEL 1202
 #define IDC_TOGGLE_PASSWORD 1223
 #define IDC_SORT_COMBO 1204
@@ -47,6 +49,9 @@
 #define IDD_PASSWORD_DIALOG            1026
 #define IDC_STATIC_PROMPT              1027
  
+#define IDD_PASSWORD_DIALOG_NEW        1028
+#define IDC_PASSWORD_EDIT              1029
+#define IDC_APP_ID                      1030
 
 #define IDC_STATIC                      -1
 

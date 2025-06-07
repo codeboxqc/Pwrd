@@ -67,6 +67,8 @@ NTSTATUS hash_sha256(
     std::vector<BYTE>& hash_output
 );
 
+
+std::vector<BYTE> GenerateKeyFromPassword(const std::wstring& password);
 bool EncryptFile(const std::wstring& source, const std::wstring& destination, const std::wstring& password);
 bool DecryptFile(const std::wstring& source, const std::wstring& destination, const std::wstring& password);
 void BufferExample(const std::wstring& password);

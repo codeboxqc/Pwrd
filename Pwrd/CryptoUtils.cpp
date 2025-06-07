@@ -453,6 +453,62 @@ bool DecryptFile(const std::wstring& source, const std::wstring& destination, co
     }
 }
 
+
+
+// Function definition
+std::vector<BYTE> GenerateKeyFromPassword(const std::wstring& password) {
+    if (password.empty()) {
+        throw std::invalid_argument("Password cannot be empty");
+    }
+
+    // Example: Derive a key using a simple hash (SHA-256)
+    BCRYPT_ALG_HANDLE hAlgorithm = nullptr;
+    BCRYPT_HASH_HANDLE hHash = nullptr;
+    DWORD hashObjectSize = 0, resultSize = 0;
+    std::vector<BYTE> hashObject, key(32); // SHA-256 produces 32 bytes
+
+    // Open an algorithm provider for SHA-256
+    if (BCryptOpenAlgorithmProvider(&hAlgorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
+        throw std::runtime_error("Failed to open algorithm provider");
+    }
+
+    // Get the size of the hash object
+    if (BCryptGetProperty(hAlgorithm, BCRYPT_OBJECT_LENGTH, (PUCHAR)&hashObjectSize, sizeof(DWORD), &resultSize, 0) != 0) {
+        BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+        throw std::runtime_error("Failed to get hash object size");
+    }
+
+    hashObject.resize(hashObjectSize);
+
+    // Create a hash
+    if (BCryptCreateHash(hAlgorithm, &hHash, hashObject.data(), hashObjectSize, nullptr, 0, 0) != 0) {
+        BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+        throw std::runtime_error("Failed to create hash");
+    }
+
+    // Hash the password
+    if (BCryptHashData(hHash, (PUCHAR)password.data(), static_cast<ULONG>(password.size() * sizeof(wchar_t)), 0) != 0) {
+        BCryptDestroyHash(hHash);
+        BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+        throw std::runtime_error("Failed to hash data");
+    }
+
+    // Finalize the hash and store it in the key vector
+    if (BCryptFinishHash(hHash, key.data(), static_cast<ULONG>(key.size()), 0) != 0) {
+        BCryptDestroyHash(hHash);
+        BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+        throw std::runtime_error("Failed to finalize hash");
+    }
+
+    // Clean up
+    BCryptDestroyHash(hHash);
+    BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+
+    return key;
+}
+
+
+
 void BufferExample(const std::wstring& password) {
     try {
         std::string plaintext = "Hello, this is a test buffer!";

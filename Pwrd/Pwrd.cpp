@@ -17,6 +17,7 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include <bcrypt.h> 
 #include "tinyxml2.h"
 
 #pragma comment(lib, "comctl32.lib")
@@ -63,6 +64,11 @@ static bool g_dataModifiedInFields = false;
 static bool g_isInsideApplyChanges = false;
 static bool isPasswordVisible = false;
 
+static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
+static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new dialog
+
+
+
 const wchar_t* animationSets[] = {
     L"/-\\|\0",
     L"⠋⠙⠹⠸⠼⠽⠾⠿\0",
@@ -91,6 +97,9 @@ void PopulateListView();
 void CopyToClipboard(const std::wstring& text);
 void UpdateListViewColors();
 void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
+int cEXIST(HWND hWnd);
+
+INT_PTR CALLBACK PasswordDialogProcNew(HWND, UINT, WPARAM, LPARAM); // Added
 
 const wchar_t* getRandomAnimationSet() {
     std::random_device rd;
@@ -167,6 +176,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
     _In_ LPWSTR lpCmdLine,
     _In_ int nCmdShow)
+
+
+
+
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
@@ -177,6 +190,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     GetModuleFileNameW(NULL, exePath, MAX_PATH);
     PathRemoveFileSpecW(exePath);
+
+
+
+
+
 
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_PWRD, szWindowClass, MAX_LOADSTRING);
@@ -238,6 +256,19 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         100, 100, 800, 600, HWND_DESKTOP, nullptr, hInstance, nullptr
     );
 
+
+    ////////////////////////////////
+    ShowWindow(hWnd, SW_HIDE);
+    int pin = cEXIST(hWnd);
+    if (pin != 1) {
+        // MessageBoxW(hWnd, L"Fail.", L"Error", MB_OK | MB_ICONERROR);
+        ShowWindow(hWnd, SW_HIDE);
+        PostQuitMessage(0);
+        return FALSE;
+    }
+    //////////////////////////////
+  
+
     if (!hWnd)
     {
         WCHAR errorMsg[256];
@@ -246,7 +277,12 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         return FALSE;
     }
 
+
+
+    
+
     ShowWindow(hWnd, nCmdShow);
+    ShowWindow(hWnd, SW_SHOW);
     UpdateWindow(hWnd);
     return TRUE;
 }
@@ -312,6 +348,11 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
 
 void ini(HWND hWnd)
 {
+
+
+   
+
+
     animationChars = getRandomAnimationSet();
 
 
@@ -1752,4 +1793,215 @@ int callpin(HWND hwnd)
     */
 
     return 1;
+}
+
+
+
+// Dialog procedure for the new password dialog
+INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    UNREFERENCED_PARAMETER(lParam);
+    static HBRUSH hEditBrush = NULL; // Static brush for edit control background
+
+    switch (message)
+    {
+    case WM_INITDIALOG:
+    {
+        if (isDarkTheme && hEditBrush == NULL) {
+            hEditBrush = CreateSolidBrush(RGB(50, 50, 50));
+        }
+        std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+        g_isInVerifyModeNewDialog = PathFileExistsW(pgpPath.c_str());
+        SetWindowTextW(hDlg, g_isInVerifyModeNewDialog ? L"Verify Password" : L"Create New Password");
+        HWND hwndParent = GetParent(hDlg) ? GetParent(hDlg) : GetDesktopWindow();
+        RECT rcDlg, rcParent;
+        GetWindowRect(hDlg, &rcDlg);
+        GetWindowRect(hwndParent, &rcParent);
+        int nWidth = rcDlg.right - rcDlg.left;
+        int nHeight = rcDlg.bottom - rcDlg.top;
+        int x = rcParent.left + (rcParent.right - rcParent.left - nWidth) / 2;
+        int y = rcParent.top + (rcParent.bottom - rcParent.top - nHeight) / 2;
+        SetWindowPos(hDlg, NULL, x, y, nWidth, nHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+        HWND hPasswordEdit = GetDlgItem(hDlg, IDC_PASSWORD_EDIT);
+        if (hPasswordEdit) {
+            SetFocus(hPasswordEdit);
+        }
+        else {
+            MessageBoxW(hDlg, L"Password edit control not found.", L"Error", MB_OK | MB_ICONERROR);
+        }
+        return (INT_PTR)FALSE;
+    }
+
+    case WM_COMMAND:
+    {
+        int wmId = LOWORD(wParam);
+        switch (wmId)
+        {
+        case IDOK:
+        {
+            HWND hEdit = GetDlgItem(hDlg, IDC_PASSWORD_EDIT);
+            WCHAR passwordBuffer[256];
+            GetWindowTextW(hEdit, passwordBuffer, ARRAYSIZE(passwordBuffer));
+            g_enteredPassword = passwordBuffer;
+            SecureZeroMemory(passwordBuffer, sizeof(passwordBuffer));
+            EndDialog(hDlg, IDOK);
+            return (INT_PTR)TRUE;
+        }
+        case IDCANCEL:
+            g_enteredPassword.clear(); // Clear password on cancel
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+
+    case WM_CTLCOLORDLG:
+        if (isDarkTheme) {
+            // Dialog background
+            return (INT_PTR)hDarkGreyBrush;
+        }
+        // If not dark theme, let DefWindowProc handle it or return a light theme brush
+        break;
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdcStatic = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcStatic, textColor); // Global dark theme text color
+            SetBkMode(hdcStatic, TRANSPARENT);
+            return (INT_PTR)hDarkGreyBrush; // Background for static control (same as dialog)
+        }
+        break;
+    }
+
+    case WM_CTLCOLOREDIT:
+    {
+        HDC hdcEdit = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcEdit, textColor); // Global dark theme text color for edit control text
+            SetBkMode(hdcEdit, TRANSPARENT);
+            // Use the specific brush for edit control background if initialized
+            if (hEditBrush != NULL) {
+                return (INT_PTR)hEditBrush;
+            }
+            else {
+                // Fallback if brush wasn't created, though it should be in WM_INITDIALOG
+                return (INT_PTR)hDarkGreyBrush;
+            }
+        }
+        break;
+    }
+
+    case WM_CTLCOLORBTN:
+    {
+        // This message is sent for standard buttons (not BS_OWNERDRAW).
+        // For dark theme, we want the button text to be light and the background to match the dialog.
+        // However, standard buttons are notoriously difficult to color perfectly without owner draw.
+        // This will attempt to set text color and background.
+        HDC hdcButton = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcButton, textColor); // Light text
+            SetBkMode(hdcButton, TRANSPARENT); // Try to make standard button background transparent
+            // so hDarkGreyBrush (dialog bg) shows through.
+            // This has limited effect on standard button appearance.
+            return (INT_PTR)hDarkGreyBrush;
+        }
+        break;
+    }
+    case WM_DESTROY:
+        // Clean up static brush used for edit control background
+        if (hEditBrush != NULL) {
+            DeleteObject(hEditBrush);
+            hEditBrush = NULL;
+        }
+        // If any other GDI objects were created per-dialog instance, clean them here.
+        break;
+
+    }
+    return (INT_PTR)FALSE; // Default processing for other messages
+}
+
+
+int cEXIST(HWND hWnd)
+{
+    std::wstring xmlPath = GetFullFilePath(L"password.pgp");
+    bool fileExists = PathFileExistsW(xmlPath.c_str());
+
+    while (true) {
+        g_isInVerifyModeNewDialog = fileExists;
+        g_enteredPassword.clear();
+        INT_PTR result = DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_PASSWORD_DIALOG), hWnd, PasswordDialogProcNew);
+
+        if (result == IDCANCEL) {
+            ClearSensitiveDataAndUI(hWnd);
+            return 0;
+        }
+        else if (result == IDOK) {
+            // Debug: Log password length
+            //WCHAR debugMsg[256];
+           // swprintf_s(debugMsg, L"g_enteredPassword length: %zu", g_enteredPassword.length());
+            //MessageBoxW(hWnd, debugMsg, L"Debug", MB_OK | MB_ICONINFORMATION);
+
+            g_enteredPassword.erase(0, g_enteredPassword.find_first_not_of(L" \t\n\r"));
+            g_enteredPassword.erase(g_enteredPassword.find_last_not_of(L" \t\n\r") + 1);
+
+            if (g_enteredPassword.empty()) {
+                MessageBoxW(hWnd, L"Password cannot be empty. Please enter a valid password.", L"Error", MB_OK | MB_ICONERROR);
+                continue;
+            }
+
+            if (!fileExists) {
+                std::vector<BYTE> key = GenerateKeyFromPassword(g_enteredPassword);
+                std::ofstream outFile(xmlPath, std::ios::binary);
+                if (outFile.is_open()) {
+                    outFile.write(reinterpret_cast<const char*>(key.data()), key.size());
+                    outFile.close();
+                    g_userKeyForXml = key;
+                    g_isPinValidated = true;
+                    SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
+                    g_enteredPassword.clear();
+                    return 1;
+                }
+                else {
+                    MessageBoxW(hWnd, L"Failed to create password file.", L"Error", MB_OK | MB_ICONERROR);
+                    return 0;
+                }
+            }
+            else {
+                std::ifstream inFile(xmlPath, std::ios::binary);
+                if (inFile.is_open()) {
+                    std::vector<BYTE> storedKey((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+                    inFile.close();
+                    std::vector<BYTE> enteredKey = GenerateKeyFromPassword(g_enteredPassword);
+                    if (storedKey == enteredKey) {
+                        g_userKeyForXml = enteredKey;
+                        g_isPinValidated = true;
+                        SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
+                        g_enteredPassword.clear();
+                        return 1;
+                    }
+                    else {
+                        g_pin_attempts++;
+                        if (g_pin_attempts >= 3) {
+                            MessageBoxW(hWnd, L"Too many incorrect attempts. Application will exit.", L"Error", MB_OK | MB_ICONERROR);
+                            ClearSensitiveDataAndUI(hWnd);
+                            return 0;
+                        }
+                        MessageBoxW(hWnd, L"Password is incorrect. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+                        continue;
+                    }
+                }
+                else {
+                    MessageBoxW(hWnd, L"Failed to read password file.", L"Error", MB_OK | MB_ICONERROR);
+                    return 0;
+                }
+            }
+        }
+        else {
+            MessageBoxW(hWnd, L"Unexpected dialog result. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+            continue;
+        }
+    }
+
+    return 0;
 }
