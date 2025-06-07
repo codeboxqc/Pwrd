@@ -32,6 +32,7 @@
 #define IDC_MidBtn 1021
 #define IDC_LowBtn  1022
 #define  IDC_reset 1023
+#define IDC_UPDATE_BUTTON 1024
 
 
 #define  IDC_EDIT_PIN 1025

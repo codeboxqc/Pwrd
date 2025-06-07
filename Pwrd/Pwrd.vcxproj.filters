@@ -33,15 +33,21 @@
     <ClInclude Include="trayicon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="CryptoUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Pwrd.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="tray.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CryptoUtils.cpp">
+      <Filter>Resource Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Pwrd.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
