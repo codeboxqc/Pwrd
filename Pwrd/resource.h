@@ -15,7 +15,7 @@
 #define IDC_USER                        1004
 #define IDC_PASSWORD                    1005
 #define IDC_NOTE                        1006
-#define IDC_ADD                         1007
+#define IDC_ADD                         9007
 #define IDC_DELETE                      1008
 #define IDC_SEARCH                      1009
 #define IDC_SEARCH_EDIT                 1010
@@ -33,6 +33,14 @@
 #define IDC_LowBtn  1022
 #define  IDC_reset 1023
 #define IDC_UPDATE_BUTTON 1024
+
+
+#define IDC_STRENGTH_LABEL 1202
+#define IDC_TOGGLE_PASSWORD 1223
+#define IDC_SORT_COMBO 1204
+#define IDC_CATEGORY 1205
+#define IDC_RESTORE_BACKUP 1206
+#define IDC_TOGGLE_THEME 1207
 
 
 #define  IDC_EDIT_PIN 1025

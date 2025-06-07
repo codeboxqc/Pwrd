@@ -28,6 +28,7 @@
 #define MAX_LOADSTRING 100
 #define ONE 1
 
+
 // Global Variables
 HINSTANCE hInst = nullptr;
 WCHAR szTitle[MAX_LOADSTRING] = { 0 };
@@ -44,15 +45,23 @@ int mx = 0, my = 0;
 HWND hTooltip = nullptr;
 HWND hListView = nullptr, hName = nullptr, hWebsite = nullptr, hEmail = nullptr, hUser = nullptr, hPassword = nullptr, hNote = nullptr, hSearchEdit = nullptr;
 HWND hAddBtn = nullptr, hDeleteBtn = nullptr, hSearchBtn = nullptr, hColorBtn = nullptr;
+HWND hUpdateBtn = nullptr;
 HWND hCopyNameBtn = nullptr, hCopyWebsiteBtn = nullptr, hCopyEmailBtn = nullptr, hCopyUserBtn = nullptr, hCopyPasswordBtn = nullptr, hCopyNoteBtn = nullptr;
 HWND AutoBtn = nullptr, XBtn = nullptr, MidBtn = nullptr, LowBtn = nullptr, hBtnicon = nullptr, resetBtn = nullptr;
+HWND hStrengthLabel = nullptr, hTogglePasswordBtn = nullptr, hSortCombo = nullptr, hCategory = nullptr, hRestoreBackupBtn = nullptr, hToggleThemeBtn = nullptr;
 COLORREF currentColor = RGB(222, 222, 8);
 COLORREF dark = RGB(33, 33, 33);
+COLORREF textColor = RGB(255, 255, 255);
+static bool isDarkTheme = true;
 static CHOOSECOLOR cc = { 0 };
 static COLORREF customColors[16] = { 0 };
 HBRUSH hDarkGreyBrush = nullptr;
 HBRUSH butBrush = nullptr;
 std::vector<PasswordEntry> entries;
+static int g_lastSelectedEntryIndex = -1;
+static bool g_dataModifiedInFields = false;
+static bool g_isInsideApplyChanges = false;
+static bool isPasswordVisible = false;
 
 const wchar_t* animationSets[] = {
     L"/-\\|\0",
@@ -76,11 +85,12 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK PasswordDlgProc(HWND, UINT, WPARAM, LPARAM);
 int callpin(HWND hwnd);
-void LoadXML();
+bool LoadXML(std::wstring xmlPath);
 void SaveXML();
 void PopulateListView();
 void CopyToClipboard(const std::wstring& text);
 void UpdateListViewColors();
+void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
 
 const wchar_t* getRandomAnimationSet() {
     std::random_device rd;
@@ -114,6 +124,7 @@ void ClearSensitiveDataAndUI(HWND hWnd) {
     if (hUser) SetWindowTextW(hUser, L"");
     if (hPassword) SetWindowTextW(hPassword, L"");
     if (hNote) SetWindowTextW(hNote, L"");
+    if (hCategory) SetWindowTextW(hCategory, L"");
     if (hListView) ListView_DeleteAllItems(hListView);
     InvalidateRect(hWnd, NULL, TRUE);
 }
@@ -149,6 +160,7 @@ void GenerateAndSetPassword(HWND hEdit, int length) {
         password += charset[dist(gen)];
     }
     SetWindowTextW(hEdit, password.c_str());
+    UpdatePasswordStrength(hEdit, hEdit);
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -249,9 +261,60 @@ void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
     SendMessage(hTooltip, TTM_ADDTOOL, 0, (LPARAM)&ti);
 }
 
+void ApplyEntryChanges(HWND hWnd, int entryIndex) {
+    if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
+        return;
+    }
+
+    PasswordEntry updatedEntry;
+    WCHAR buffer[2048];
+
+    GetWindowTextW(hName, buffer, ARRAYSIZE(buffer));
+    updatedEntry.name = buffer;
+    GetWindowTextW(hWebsite, buffer, ARRAYSIZE(buffer));
+    updatedEntry.website = buffer;
+    GetWindowTextW(hEmail, buffer, ARRAYSIZE(buffer));
+    updatedEntry.email = buffer;
+    GetWindowTextW(hUser, buffer, ARRAYSIZE(buffer));
+    updatedEntry.user = buffer;
+    GetWindowTextW(hPassword, buffer, ARRAYSIZE(buffer));
+    updatedEntry.password = buffer;
+    GetWindowTextW(hNote, buffer, ARRAYSIZE(buffer));
+    updatedEntry.note = buffer;
+    GetWindowTextW(hCategory, buffer, ARRAYSIZE(buffer));
+    updatedEntry.category = buffer;
+    updatedEntry.color = currentColor;
+
+    entries[entryIndex] = updatedEntry;
+    g_lastSelectedEntryIndex = entryIndex;
+
+    SaveXML();
+    PopulateListView();
+}
+
+void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
+    WCHAR buffer[1024];
+    GetWindowTextW(hPasswordEdit, buffer, 1024);
+    std::wstring password = buffer;
+    int score = 0;
+    if (password.length() >= 8) score++;
+    if (std::any_of(password.begin(), password.end(), ::iswupper)) score++;
+    if (std::any_of(password.begin(), password.end(), ::iswlower)) score++;
+    if (std::any_of(password.begin(), password.end(), ::iswdigit)) score++;
+    if (std::any_of(password.begin(), password.end(), [](wchar_t c) { return wcschr(L"!@#$%^&*()-_=+[]{}<>?/|", c); })) score++;
+    const wchar_t* strength = score <= 2 ? L"Weak" : score <= 4 ? L"Medium" : L"Strong";
+    COLORREF strengthColor = score <= 2 ? RGB(255, 0, 0) : score <= 4 ? RGB(255, 165, 0) : RGB(0, 255, 0);
+    SetWindowTextW(hStrengthLabel, strength);
+    //SendMessage(hStrengthLabel, WM_SETFONT, (WPARAM)hBigFont, TRUE);
+    SetBkMode(GetDC(hStrengthLabel), TRANSPARENT);
+    InvalidateRect(hStrengthLabel, nullptr, TRUE);
+}
+
 void ini(HWND hWnd)
 {
     animationChars = getRandomAnimationSet();
+
+
     hListView = CreateWindowEx(0, WC_LISTVIEW, L"",
         WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
         10, 10, 200, 580, hWnd, (HMENU)IDC_LISTVIEW, hInst, nullptr);
@@ -267,71 +330,117 @@ void ini(HWND hWnd)
     HWND hHeader = ListView_GetHeader(hListView);
     ListView_SetBkColor(hListView, dark);
     ListView_SetTextBkColor(hListView, dark);
-    ListView_SetTextColor(hListView, RGB(255, 255, 255));
+    ListView_SetTextColor(hListView, textColor);
 
+    // Name field
     CreateWindow(L"STATIC", L"Name", WS_CHILD | WS_VISIBLE,
-        220, 10, 80, 20, hWnd, nullptr, hInst, nullptr);
+        220, 18, 80, 22, hWnd, nullptr, hInst, nullptr);
     hName = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        300, 10, 350, 28, hWnd, (HMENU)IDC_NAME, hInst, nullptr);
-
-    CreateWindow(L"STATIC", L"Website", WS_CHILD | WS_VISIBLE,
-        220, 40, 80, 20, hWnd, nullptr, hInst, nullptr);
-    hWebsite = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        300, 40, 350, 28, hWnd, (HMENU)IDC_WEBSITE, hInst, nullptr);
-
-    CreateWindow(L"STATIC", L"Email", WS_CHILD | WS_VISIBLE,
-        220, 70, 80, 20, hWnd, nullptr, hInst, nullptr);
-    hEmail = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        300, 70, 350, 28, hWnd, (HMENU)IDC_EMAIL, hInst, nullptr);
-
-    CreateWindow(L"STATIC", L"User", WS_CHILD | WS_VISIBLE,
-        220, 100, 80, 20, hWnd, nullptr, hInst, nullptr);
-    hUser = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        300, 100, 350, 28, hWnd, (HMENU)IDC_USER, hInst, nullptr);
-
-    CreateWindow(L"STATIC", L"Password", WS_CHILD | WS_VISIBLE,
-        220, 130, 80, 20, hWnd, nullptr, hInst, nullptr);
-    AutoBtn = CreateWindow(L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        230, 147, 40, 16, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
-    hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL,
-        300, 130, 350, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
-
-    CreateWindow(L"STATIC", L"Note", WS_CHILD | WS_VISIBLE,
-        220, 218, 80, 20, hWnd, nullptr, hInst, nullptr);
-    hNote = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-        300, 162, 350, 130, hWnd, (HMENU)IDC_NOTE, hInst, nullptr);
-
+        310, 18, 330, 26, hWnd, (HMENU)IDC_NAME, hInst, nullptr);
     hCopyNameBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 10, 50, 20, hWnd, (HMENU)IDC_COPY_NAME, hInst, nullptr);
+        654, 18, 50, 22, hWnd, (HMENU)IDC_COPY_NAME, hInst, nullptr);
+
+    // Website field (increased spacing: 50 from previous)
+    CreateWindow(L"STATIC", L"Website", WS_CHILD | WS_VISIBLE,
+        220, 60, 80, 20, hWnd, nullptr, hInst, nullptr);
+    hWebsite = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        310, 60, 330, 28, hWnd, (HMENU)IDC_WEBSITE, hInst, nullptr);
     hCopyWebsiteBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 40, 50, 20, hWnd, (HMENU)IDC_COPY_WEBSITE, hInst, nullptr);
+        654, 60, 50, 20, hWnd, (HMENU)IDC_COPY_WEBSITE, hInst, nullptr);
+
+    // Email field (increased spacing: 50 from previous)
+    CreateWindow(L"STATIC", L"Email", WS_CHILD | WS_VISIBLE,
+        220, 110, 80, 20, hWnd, nullptr, hInst, nullptr);
+    hEmail = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        310, 110, 330, 28, hWnd, (HMENU)IDC_EMAIL, hInst, nullptr);
     hCopyEmailBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 70, 50, 20, hWnd, (HMENU)IDC_COPY_EMAIL, hInst, nullptr);
+        654, 110, 50, 20, hWnd, (HMENU)IDC_COPY_EMAIL, hInst, nullptr);
+
+    // User field (increased spacing: 50 from previous)
+    CreateWindow(L"STATIC", L"User", WS_CHILD | WS_VISIBLE,
+        220, 160, 80, 20, hWnd, nullptr, hInst, nullptr);
+    hUser = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        310, 160, 330, 28, hWnd, (HMENU)IDC_USER, hInst, nullptr);
     hCopyUserBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 100, 50, 20, hWnd, (HMENU)IDC_COPY_USER, hInst, nullptr);
+        654, 160, 50, 20, hWnd, (HMENU)IDC_COPY_USER, hInst, nullptr);
+
+    // Password field (increased spacing: 50 from previous)
+    CreateWindow(L"STATIC", L"Password", WS_CHILD | WS_VISIBLE,
+        220, 210, 80, 20, hWnd, nullptr, hInst, nullptr);
+     AutoBtn = CreateWindow(L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        236, 232, 40, 20, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
+   
+   // hTogglePasswordBtn = CreateWindow(L"BUTTON", L"Show", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+   //     570, 212, 70, 28, hWnd, (HMENU)IDC_TOGGLE_PASSWORD, hInst, nullptr);
+
+   // hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
+   //    310, 210, 250, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
+
+    hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL  ,
+        310, 210, 250, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
+
+
     hCopyPasswordBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 130, 50, 20, hWnd, (HMENU)IDC_COPY_PASSWORD, hInst, nullptr);
+        654, 210, 50, 20, hWnd, (HMENU)IDC_COPY_PASSWORD, hInst, nullptr);
+    hStrengthLabel = CreateWindow(L"STATIC", L"Strength: ", WS_CHILD | WS_VISIBLE,
+        310, 250, 100, 30, hWnd, (HMENU)IDC_STRENGTH_LABEL, hInst, nullptr);
+
+    // Category field (increased spacing: 60 from previous to avoid overlap)
+    CreateWindow(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
+        220, 300, 80, 20, hWnd, nullptr, hInst, nullptr);
+    hCategory = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL,
+        300, 300, 350, 200, hWnd, (HMENU)IDC_CATEGORY, hInst, nullptr);
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Personal");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Work");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Web");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Email");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Crap");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Other");
+    SetWindowTextW(hCategory, L"Web");
+
+    // Note field (increased spacing: 50 from previous to avoid overlap)
+    CreateWindow(L"STATIC", L"Note", WS_CHILD | WS_VISIBLE,
+        220, 340, 60, 20, hWnd, nullptr, hInst, nullptr);
+    hNote = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
+        300, 340, 350, 100, hWnd, (HMENU)IDC_NOTE, hInst, nullptr);
     hCopyNoteBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 180, 50, 20, hWnd, (HMENU)IDC_COPY_NOTE, hInst, nullptr);
+        654, 340, 50, 20, hWnd, (HMENU)IDC_COPY_NOTE, hInst, nullptr);
 
-    CreateWindow(L"STATIC", L"Color:", WS_CHILD | WS_VISIBLE,
-        220, 390, 50, 20, hWnd, nullptr, hInst, nullptr);
-    hColorBtn = CreateWindow(L"BUTTON", L"Pick Color", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        270, 390, 80, 20, hWnd, (HMENU)IDC_COLOR, hInst, nullptr);
-
+    // Buttons (repositioned lower with more space after password)
+    hUpdateBtn = CreateWindow(L"BUTTON", L"Update", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        474, 450, 80, 30, hWnd, (HMENU)IDC_UPDATE_BUTTON, hInst, nullptr);
     hAddBtn = CreateWindow(L"BUTTON", L"Add", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        654, 310, 80, 30, hWnd, (HMENU)IDC_ADD, hInst, nullptr);
+        564, 450, 80, 30, hWnd, (HMENU)IDC_ADD, hInst, nullptr);
     hDeleteBtn = CreateWindow(L"BUTTON", L"<-Delete", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        220, 310, 80, 30, hWnd, (HMENU)IDC_DELETE, hInst, nullptr);
+        220, 450, 80, 30, hWnd, (HMENU)IDC_DELETE, hInst, nullptr);
 
     hSearchBtn = CreateWindow(L"BUTTON", L"Search", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        474, 350, 80, 20, hWnd, (HMENU)IDC_SEARCH, hInst, nullptr);
+        474, 500, 80, 20, hWnd, (HMENU)IDC_SEARCH, hInst, nullptr);
     resetBtn = CreateWindow(L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        560, 350, 60, 20, hWnd, (HMENU)IDC_reset, hInst, nullptr);
+        564, 500, 80, 20, hWnd, (HMENU)IDC_reset, hInst, nullptr);
     hSearchEdit = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-        270, 350, 200, 20, hWnd, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
-    ShowScrollBar(hNote, SB_BOTH, FALSE);
+        220, 500, 240, 20, hWnd, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
 
+   // hSortCombo = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+      // 220, 530, 120, 100, hWnd, (HMENU)IDC_SORT_COMBO, hInst, nullptr);
+
+    hSortCombo = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL,
+        220, 530, 120, 100, hWnd, (HMENU)IDC_SORT_COMBO, hInst, nullptr);
+    SendMessage(hSortCombo, CB_ADDSTRING, 0, (LPARAM)L"Sort by Name");
+    SendMessage(hSortCombo, CB_ADDSTRING, 0, (LPARAM)L"Sort by Category");
+    SendMessage(hSortCombo, CB_SETCURSEL, 0, 0);
+
+    CreateWindow(L"STATIC", L"Color:", WS_CHILD | WS_VISIBLE,
+        350, 530, 50, 20, hWnd, nullptr, hInst, nullptr);
+    hColorBtn = CreateWindow(L"BUTTON", L"Pick Color", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        410, 530, 80, 20, hWnd, (HMENU)IDC_COLOR, hInst, nullptr);
+
+    hRestoreBackupBtn = CreateWindow(L"BUTTON", L"Restore", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        220, 565, 60, 20, hWnd, (HMENU)IDC_RESTORE_BACKUP, hInst, nullptr);
+    hToggleThemeBtn = CreateWindow(L"BUTTON", L"Toggle Theme", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        330, 565, 100, 20, hWnd, (HMENU)IDC_TOGGLE_THEME, hInst, nullptr);
+
+    // Window control buttons
     XBtn = CreateWindow(L"BUTTON", L"X", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         774, 5, 22, 30, hWnd, (HMENU)IDC_XBtn, hInst, nullptr);
     MidBtn = CreateWindow(L"BUTTON", L"O", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
@@ -339,6 +448,7 @@ void ini(HWND hWnd)
     LowBtn = CreateWindow(L"BUTTON", L"-", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         774, 65, 22, 30, hWnd, (HMENU)IDC_LowBtn, hInst, nullptr);
 
+    // Icon button
     HICON tmphIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_PWRD));
     ICONINFO iconInfo;
     GetIconInfo(tmphIcon, &iconInfo);
@@ -350,6 +460,7 @@ void ini(HWND hWnd)
     );
     SendMessage(hBtnicon, BM_SETIMAGE, IMAGE_ICON, (LPARAM)tmphIcon);
 
+    // Tooltip setup
     hTooltip = CreateWindowEx(0, TOOLTIPS_CLASS, nullptr,
         WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -364,10 +475,12 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hUser, L"Enter the username");
         AddTooltip(hTooltip, hWnd, hPassword, L"Enter the password");
         AddTooltip(hTooltip, hWnd, hNote, L"Enter additional notes");
+        AddTooltip(hTooltip, hWnd, hCategory, L"Select or enter a category");
         AddTooltip(hTooltip, hWnd, hSearchEdit, L"Enter search term");
         AddTooltip(hTooltip, hWnd, hAddBtn, L"Add a new entry");
         AddTooltip(hTooltip, hWnd, hDeleteBtn, L"Delete the selected entry");
-        AddTooltip(hTooltip, hWnd, hSearchBtn, L"Search entries by name");
+        AddTooltip(hTooltip, hWnd, hUpdateBtn, L"Update the selected entry");
+        AddTooltip(hTooltip, hWnd, hSearchBtn, L"Search entries by any field");
         AddTooltip(hTooltip, hWnd, hColorBtn, L"Pick a color for the entry");
         AddTooltip(hTooltip, hWnd, hCopyNameBtn, L"Copy name to clipboard");
         AddTooltip(hTooltip, hWnd, hCopyWebsiteBtn, L"Copy website to clipboard");
@@ -376,10 +489,15 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hCopyPasswordBtn, L"Copy password to clipboard");
         AddTooltip(hTooltip, hWnd, hCopyNoteBtn, L"Copy note to clipboard");
         AddTooltip(hTooltip, hWnd, AutoBtn, L"Generate a random password");
+        AddTooltip(hTooltip, hWnd, hTogglePasswordBtn, L"Toggle password visibility");
+        AddTooltip(hTooltip, hWnd, hSortCombo, L"Sort entries by name or category");
+        AddTooltip(hTooltip, hWnd, hRestoreBackupBtn, L"Restore from backup file");
+        AddTooltip(hTooltip, hWnd, hToggleThemeBtn, L"Switch between dark and light themes");
         SendMessage(hTooltip, TTM_SETMAXTIPWIDTH, 0, 100);
         SendMessage(hTooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 1000);
     }
 
+    // Font setup
     NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
     SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
     ncm.lfMessageFont.lfHeight = 20;
@@ -390,18 +508,25 @@ void ini(HWND hWnd)
     SendMessage(hUser, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hPassword, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNote, WM_SETFONT, (WPARAM)hFont, TRUE);
+    SendMessage(hCategory, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hSearchEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+    SendMessage(hStrengthLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     ncm.lfMessageFont.lfHeight = 24;
     HFONT hFont2 = CreateFontIndirect(&ncm.lfMessageFont);
     SendMessage(hListView, WM_SETFONT, (WPARAM)hFont2, TRUE);
     ncm.lfMessageFont.lfHeight = 40;
     hBigFont = CreateFontIndirect(&ncm.lfMessageFont);
 
+    // Color chooser setup
     ZeroMemory(&cc, sizeof(cc));
     cc.lStructSize = sizeof(cc);
     cc.hwndOwner = hWnd;
     cc.lpCustColors = customColors;
     cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+    // Initialize flags
+    g_lastSelectedEntryIndex = -1;
+    g_dataModifiedInFields = false;
 
     SetTimer(hWnd, ONE, 333, nullptr);
     int pin_result = callpin(hWnd);
@@ -410,7 +535,8 @@ void ini(HWND hWnd)
         PostQuitMessage(0);
         return;
     }
-    LoadXML();
+    //LoadXML();
+    LoadXML(L"passwords.xml");
     PopulateListView();
 }
 
@@ -499,9 +625,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_DRAWITEM:
     {
         LPDRAWITEMSTRUCT lpDraw = (LPDRAWITEMSTRUCT)lParam;
-        COLORREF Ti = RGB(177, 177, 177);
+        COLORREF Ti = isDarkTheme ? RGB(177, 177, 177) : RGB(0, 0, 0);
         switch (lpDraw->CtlID)
         {
+        case IDC_UPDATE_BUTTON:
         case IDC_reset:
         case IDC_XBtn:
         case IDC_MidBtn:
@@ -511,6 +638,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_ADD:
         case IDC_COLOR:
         case IDC_SEARCH:
+        case IDC_TOGGLE_PASSWORD:
+        case IDC_RESTORE_BACKUP:
+        case IDC_TOGGLE_THEME:
         case IDC_COPY_NAME:
         case IDC_COPY_WEBSITE:
         case IDC_COPY_EMAIL:
@@ -526,6 +656,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             const wchar_t* buttonText = L"";
             switch (lpDraw->CtlID)
             {
+            case IDC_UPDATE_BUTTON: buttonText = L"Update"; break;
             case IDC_reset: buttonText = L"Reset"; break;
             case IDC_XBtn: buttonText = L"X"; break;
             case IDC_MidBtn: buttonText = L"O"; break;
@@ -535,6 +666,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_ADD: buttonText = L"Add"; break;
             case IDC_COLOR: buttonText = L"Pick Color"; break;
             case IDC_SEARCH: buttonText = L"Search"; break;
+            //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
+            case IDC_RESTORE_BACKUP: buttonText = L"Restore Backup"; break;
+            case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
             case IDC_COPY_NAME:
             case IDC_COPY_WEBSITE:
             case IDC_COPY_EMAIL:
@@ -555,13 +689,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         HDC hdcStatic = (HDC)wParam;
         SetBkMode(hdcStatic, TRANSPARENT);
-        return (INT_PTR)CreateSolidBrush(RGB(53, 50, 50));
+        SetTextColor(hdcStatic, textColor);
+        return (INT_PTR)hDarkGreyBrush;
     }
 
     case WM_CTLCOLORDLG:
     case WM_CTLCOLORLISTBOX:
     case WM_CTLCOLORSCROLLBAR:
     case WM_CTLCOLOREDIT:
+    
     {
         HDC hdc = (HDC)wParam;
         SetBkMode(hdc, TRANSPARENT);
@@ -577,7 +713,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         HDC hdc = (HDC)wParam;
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(53, 50, 50));
+        SetTextColor(hdc, isDarkTheme ? RGB(255, 255, 255) : RGB(0, 0, 0));
         return (LRESULT)hDarkGreyBrush;
     }
 
@@ -615,13 +751,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     int idx = pnmv->iItem;
                     if (idx >= 0 && static_cast<size_t>(idx) < entries.size())
                     {
+                        if (g_dataModifiedInFields && g_lastSelectedEntryIndex != -1 &&
+                            static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size() &&
+                            !g_isInsideApplyChanges)
+                        {
+                            g_isInsideApplyChanges = true;
+                            ApplyEntryChanges(hWnd, g_lastSelectedEntryIndex);
+                            g_isInsideApplyChanges = false;
+                        }
+
                         SetWindowTextW(hName, entries[idx].name.c_str());
                         SetWindowTextW(hWebsite, entries[idx].website.c_str());
                         SetWindowTextW(hEmail, entries[idx].email.c_str());
                         SetWindowTextW(hUser, entries[idx].user.c_str());
                         SetWindowTextW(hPassword, entries[idx].password.c_str());
                         SetWindowTextW(hNote, entries[idx].note.c_str());
+                        SetWindowTextW(hCategory, entries[idx].category.c_str());
                         currentColor = entries[idx].color;
+                        g_lastSelectedEntryIndex = idx;
+                        g_dataModifiedInFields = false;
+                        UpdatePasswordStrength(hWnd, hPassword);
                     }
                 }
             }
@@ -745,19 +894,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             TextOutW(hdcMem, 10, 10, L"Bitmap not loaded", 16);
         }
 
+
+        /////////////////////////////////////
         BitBlt(hdc, 0, 0, width, height, hdcMem, 0, 0, SRCCOPY);
         HFONT hOldFont = (HFONT)SelectObject(hdc, hBigFont);
         wchar_t currentChar[2] = { animationChars[animationIndex], L'\0' };
-        SetTextColor(hdc, RGB(11, 11, 11));
+        SetTextColor(hdc, isDarkTheme ? RGB(11, 11, 11) : RGB(200, 200, 200));
         SetBkMode(hdc, TRANSPARENT);
-        TextOut(hdc, 670, 210, currentChar, 1);
+        TextOut(hdc, 670, 250, currentChar, 1);
+        /////////////////////////////////////////
 
-        HPEN hPen2 = CreatePen(PS_SOLID, 1, RGB(22, 22, 22));
+        HPEN hPen2 = CreatePen(PS_SOLID, 1, isDarkTheme ? RGB(22, 22, 22) : RGB(100, 100, 100));
         HGDIOBJ hOldPen2 = SelectObject(hdc, hPen2);
         HBRUSH hBrush2 = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
         HGDIOBJ hOldBrush2 = SelectObject(hdc, hBrush2);
         Rectangle(hdc, 0, 0, 800, 600);
-        hPen2 = CreatePen(PS_SOLID, 1, RGB(11, 11, 11));
+        hPen2 = CreatePen(PS_SOLID, 1, isDarkTheme ? RGB(11, 11, 11) : RGB(150, 150, 150));
         Rectangle(hdc, 1, 1, 799, 599);
         SelectObject(hdc, hOldPen2);
         SelectObject(hdc, hOldBrush2);
@@ -774,8 +926,43 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
     {
         int wmId = LOWORD(wParam);
+        int wmEvent = HIWORD(wParam);
+
         switch (wmId)
         {
+        case IDC_NAME:
+        case IDC_WEBSITE:
+        case IDC_EMAIL:
+        case IDC_USER:
+        case IDC_PASSWORD:
+        case IDC_NOTE:
+        case IDC_CATEGORY:
+        case IDC_SEARCH_EDIT:
+            if (wmEvent == EN_CHANGE)
+            {
+                g_dataModifiedInFields = true;
+                if (wmId == IDC_PASSWORD) {
+                    UpdatePasswordStrength(hWnd, hPassword);
+                }
+            }
+            break;
+        case IDC_SORT_COMBO:
+            if (wmEvent == CBN_SELCHANGE)
+            {
+                int sel = SendMessage(hSortCombo, CB_GETCURSEL, 0, 0);
+                if (sel == 0) { // Sort by Name
+                    std::sort(entries.begin(), entries.end(), [](const PasswordEntry& a, const PasswordEntry& b) {
+                        return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+                        });
+                }
+                else if (sel == 1) { // Sort by Category
+                    std::sort(entries.begin(), entries.end(), [](const PasswordEntry& a, const PasswordEntry& b) {
+                        return _wcsicmp(a.category.c_str(), b.category.c_str()) < 0;
+                        });
+                }
+                PopulateListView();
+            }
+            break;
         case IDC_XBtn:
             DestroyWindow(hWnd);
             break;
@@ -788,7 +975,39 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case IDC_AutoBtn:
             GenerateAndSetPassword(hPassword, 16);
+            g_dataModifiedInFields = true;
+            UpdatePasswordStrength(hWnd, hPassword);
             break;
+            
+            /*
+        case IDC_TOGGLE_PASSWORD:
+        {
+            isPasswordVisible = !isPasswordVisible;
+            SetWindowTextW(hTogglePasswordBtn, isPasswordVisible ? L"Hide" : L"Show");
+
+            // Store current password text
+            WCHAR buffer[1024];
+            GetWindowTextW(hPassword, buffer, 1024);
+
+            // Toggle password style
+            LONG style = GetWindowLong(hPassword, GWL_STYLE);
+            if (isPasswordVisible) {
+                style &= ~ES_PASSWORD; // Remove password masking
+            }
+            else {
+                style |= ES_PASSWORD;  // Add password masking
+            }
+            SetWindowLong(hPassword, GWL_STYLE, style);
+
+            // Restore text and force redraw
+            SetWindowTextW(hPassword, buffer); // Restore original text
+            InvalidateRect(hPassword, nullptr, TRUE);
+            UpdateWindow(hPassword);
+            RedrawWindow(hPassword, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            break;
+        }
+        */
+
         case IDC_ADD:
         {
             PasswordEntry entry;
@@ -805,45 +1024,48 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             entry.password = buffer;
             GetWindowTextW(hNote, buffer, 1024);
             entry.note = buffer;
+            GetWindowTextW(hCategory, buffer, 1024);
+            entry.category = buffer;
             entry.color = currentColor;
 
             if (!entry.name.empty()) {
-                bool updated = false;
-                for (auto& e : entries) {
+                bool exists = false;
+                for (const auto& e : entries) {
                     if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
-                        if (e.website != entry.website ||
-                            e.email != entry.email ||
-                            e.user != entry.user ||
-                            e.password != entry.password ||
-                            e.note != entry.note ||
-                            e.color != entry.color)
-                        {
-                            e.website = entry.website;
-                            e.email = entry.email;
-                            e.user = entry.user;
-                            e.password = entry.password;
-                            e.note = entry.note;
-                            e.color = entry.color;
-                            SaveXML();
-                            PopulateListView();
-                        }
-                        updated = true;
+                        exists = true;
+                        MessageBoxW(hWnd, L"An entry with this name already exists. Please use a unique name or update the existing entry.", L"Error", MB_OK | MB_ICONWARNING);
                         break;
                     }
                 }
-                if (!updated) {
+                if (!exists) {
                     entries.push_back(entry);
                     SaveXML();
                     PopulateListView();
+                    SetWindowTextW(hName, L"");
+                    SetWindowTextW(hWebsite, L"");
+                    SetWindowTextW(hEmail, L"");
+                    SetWindowTextW(hUser, L"");
+                    SetWindowTextW(hPassword, L"");
+                    SetWindowTextW(hNote, L"");
+                    SetWindowTextW(hCategory, L"Personal");
+                    currentColor = RGB(53, 50, 50);
+                    g_lastSelectedEntryIndex = -1;
+                    g_dataModifiedInFields = false;
+                    UpdatePasswordStrength(hWnd, hPassword);
                 }
-                SetWindowTextW(hName, L"");
-                SetWindowTextW(hWebsite, L"");
-                SetWindowTextW(hEmail, L"");
-                SetWindowTextW(hUser, L"");
-                SetWindowTextW(hPassword, L"");
-                SetWindowTextW(hNote, L"");
-                currentColor = RGB(53, 50, 50);
                 SetFocus(hWnd);
+            }
+            else {
+                MessageBoxW(hWnd, L"Name field cannot be empty.", L"Error", MB_OK | MB_ICONWARNING);
+            }
+            break;
+        }
+        case IDC_UPDATE_BUTTON:
+        {
+            if (g_lastSelectedEntryIndex != -1 && static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size()) {
+                g_isInsideApplyChanges = true;
+                ApplyEntryChanges(hWnd, g_lastSelectedEntryIndex);
+                g_isInsideApplyChanges = false;
             }
             break;
         }
@@ -851,17 +1073,29 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
             if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
-                entries.erase(entries.begin() + idx);
-                SaveXML();
-                PopulateListView();
-                SetWindowTextW(hName, L"");
-                SetWindowTextW(hWebsite, L"");
-                SetWindowTextW(hEmail, L"");
-                SetWindowTextW(hUser, L"");
-                SetWindowTextW(hPassword, L"");
-                SetWindowTextW(hNote, L"");
-                currentColor = RGB(53, 50, 50);
-                SetFocus(hWnd);
+                WCHAR message[256];
+                swprintf_s(message, L"Are you sure you want to delete the entry '%s'?", entries[idx].name.c_str());
+                if (MessageBoxW(hWnd, message, L"Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    entries.erase(entries.begin() + idx);
+                    SaveXML();
+                    PopulateListView();
+                    SetWindowTextW(hName, L"");
+                    SetWindowTextW(hWebsite, L"");
+                    SetWindowTextW(hEmail, L"");
+                    SetWindowTextW(hUser, L"");
+                    SetWindowTextW(hPassword, L"");
+                    SetWindowTextW(hNote, L"");
+                    SetWindowTextW(hCategory, L"Personal");
+                    currentColor = RGB(53, 50, 50);
+                    g_lastSelectedEntryIndex = -1;
+                    g_dataModifiedInFields = false;
+                    ListView_SetItemState(hListView, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+                    UpdatePasswordStrength(hWnd, hPassword);
+                    SetFocus(hWnd);
+                }
+            }
+            else {
+                MessageBoxW(hWnd, L"No entry selected.", L"Error", MB_OK | MB_ICONWARNING);
             }
             break;
         }
@@ -883,7 +1117,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 if (search.empty() ||
                     e.name.find(search) != std::wstring::npos ||
                     e.website.find(search) != std::wstring::npos ||
-                    e.note.find(search) != std::wstring::npos)
+                    e.email.find(search) != std::wstring::npos ||
+                    e.user.find(search) != std::wstring::npos ||
+                    e.password.find(search) != std::wstring::npos ||
+                    e.note.find(search) != std::wstring::npos ||
+                    e.category.find(search) != std::wstring::npos)
                 {
                     lvi.pszText = const_cast<LPWSTR>(e.name.c_str());
                     lvi.lParam = (LPARAM)i;
@@ -922,6 +1160,71 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             ShowScrollBar(hListView, SB_VERT, FALSE);
             ShowScrollBar(hListView, SB_HORZ, FALSE);
             SetFocus(hWnd);
+            break;
+        }
+
+
+
+        case IDC_RESTORE_BACKUP:
+        {
+            if (MessageBoxW(hWnd, L"Restore from backup? This will overwrite current entries.", L"Confirm Restore", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                std::wstring backupPath = GetFullFilePath(L"passwords_backup.xml");
+                std::wstring targetPath = GetFullFilePath(L"passwords.xml");
+
+                // Debug: Verify file paths
+                WCHAR debugMsg[512];
+                swprintf_s(debugMsg, L"Backup path: %s\nTarget path: %s", backupPath.c_str(), targetPath.c_str());
+                MessageBoxW(hWnd, debugMsg, L"Debug Paths", MB_OK);
+
+                if (PathFileExistsW(backupPath.c_str())) {
+                    // Check backup file size
+                    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
+                    if (GetFileAttributesExW(backupPath.c_str(), GetFileExInfoStandard, &fileInfo) && fileInfo.nFileSizeLow == 0) {
+                        MessageBoxW(hWnd, L"Backup file is empty.", L"Error", MB_OK | MB_ICONERROR);
+                        break;
+                    }
+
+                    // Copy backup file
+                    if (CopyFileW(backupPath.c_str(), targetPath.c_str(), FALSE)) {
+                        // Load XML and populate ListView
+                        entries.clear();
+                        if (LoadXML(targetPath)) {
+                            PopulateListView();
+                            ClearSensitiveDataAndUI(hWnd);
+                            MessageBoxW(hWnd, L"Backup restored successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
+                        }
+                        else {
+                            swprintf_s(debugMsg, L"Failed to load %s. Check file content.", targetPath.c_str());
+                            MessageBoxW(hWnd, debugMsg, L"Load Error", MB_OK | MB_ICONERROR);
+                        }
+                    }
+                    else {
+                        DWORD err = GetLastError();
+                        swprintf_s(debugMsg, L"Copy failed. Error code: %d", err);
+                        MessageBoxW(hWnd, debugMsg, L"Copy Error", MB_OK | MB_ICONERROR);
+                    }
+                }
+                else {
+                    MessageBoxW(hWnd, L"Backup file not found.", L"Error", MB_OK | MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
+
+
+        case IDC_TOGGLE_THEME:
+        {
+            isDarkTheme = !isDarkTheme;
+            dark = isDarkTheme ? RGB(33, 33, 33) : RGB(22, 22, 22);
+            textColor = isDarkTheme ? RGB(255, 255, 255) : RGB(222, 222,8 ); 
+            DeleteObject(hDarkGreyBrush);
+            hDarkGreyBrush = CreateSolidBrush(dark);
+            ListView_SetBkColor(hListView, dark);
+            ListView_SetTextBkColor(hListView, dark);
+            ListView_SetTextColor(hListView, textColor);
+            InvalidateRect(hWnd, nullptr, TRUE);
+            UpdateWindow(hWnd);
             break;
         }
         case IDC_COLOR:
@@ -983,13 +1286,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             CopyToClipboard(buffer);
             break;
         }
-        case IDC_COPY_COLOR:
-        {
-            WCHAR buffer[32];
-            swprintf_s(buffer, L"#%02X%02X%02X", GetRValue(currentColor), GetGValue(currentColor), GetBValue(currentColor));
-            CopyToClipboard(buffer);
-            break;
-        }
         case IDM_ABOUT:
             DialogBox(hInst, MAKEINTRESOURCE(IDC_PWRD), hWnd, About);
             break;
@@ -1008,6 +1304,57 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             SetFocus(hWnd);
             DestroyWindow(hWnd);
+        }
+        else if (wParam == VK_UP || wParam == VK_DOWN)
+        {
+            if (GetFocus() == hListView)
+            {
+                int currIdx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
+                if (currIdx == -1 && entries.size() > 0)
+                {
+                    currIdx = 0;
+                }
+                else if (currIdx >= 0)
+                {
+                    if (g_dataModifiedInFields && g_lastSelectedEntryIndex != -1 &&
+                        static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size() &&
+                        !g_isInsideApplyChanges)
+                    {
+                        g_isInsideApplyChanges = true;
+                        ApplyEntryChanges(hWnd, g_lastSelectedEntryIndex);
+                        g_isInsideApplyChanges = false;
+                    }
+                }
+
+                int newIdx = currIdx;
+                if (wParam == VK_UP && currIdx > 0)
+                {
+                    newIdx = currIdx - 1;
+                }
+                else if (wParam == VK_DOWN && currIdx < static_cast<int>(entries.size()) - 1)
+                {
+                    newIdx = currIdx + 1;
+                }
+
+                if (newIdx >= 0 && static_cast<size_t>(newIdx) < entries.size())
+                {
+                    ListView_SetItemState(hListView, currIdx, 0, LVIS_SELECTED | LVIS_FOCUSED);
+                    ListView_SetItemState(hListView, newIdx, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+                    ListView_EnsureVisible(hListView, newIdx, FALSE);
+                    SetWindowTextW(hName, entries[newIdx].name.c_str());
+                    SetWindowTextW(hWebsite, entries[newIdx].website.c_str());
+                    SetWindowTextW(hEmail, entries[newIdx].email.c_str());
+                    SetWindowTextW(hUser, entries[newIdx].user.c_str());
+                    SetWindowTextW(hPassword, entries[newIdx].password.c_str());
+                    SetWindowTextW(hNote, entries[newIdx].note.c_str());
+                    SetWindowTextW(hCategory, entries[newIdx].category.c_str());
+                    currentColor = entries[newIdx].color;
+                    g_lastSelectedEntryIndex = newIdx;
+                    g_dataModifiedInFields = false;
+                    UpdatePasswordStrength(hWnd, hPassword);
+                }
+                return TRUE;
+            }
         }
         ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
@@ -1042,17 +1389,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             entry.password = buffer;
             GetWindowTextW(hNote, buffer, 1024);
             entry.note = buffer;
+            GetWindowTextW(hCategory, buffer, 1024);
+            entry.category = buffer;
             entry.color = currentColor;
             bool updated = false;
             bool exists = false;
             for (auto& e : entries) {
-                if (e.name == entry.name) {
+                if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
                     exists = true;
                     if (e.website != entry.website ||
                         e.email != entry.email ||
                         e.user != entry.user ||
                         e.password != entry.password ||
                         e.note != entry.note ||
+                        e.category != entry.category ||
                         e.color != entry.color)
                     {
                         e = entry;
@@ -1082,6 +1432,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(hBitmap);
         if (hCustomCursor)
             DeleteObject(hCustomCursor);
+        if (hDarkGreyBrush)
+            DeleteObject(hDarkGreyBrush);
+        if (butBrush)
+            DeleteObject(butBrush);
         ShutdownGDIPlus();
         CoUninitialize();
         PostQuitMessage(0);
@@ -1121,39 +1475,109 @@ std::wstring Utf8ToWstring(const char* utf8) {
     return std::wstring(buffer.data());
 }
 
+ 
 tinyxml2::XMLDocument tiny;
 
-void LoadXML() {
-    if (!g_isPinValidated) {
-        return;
-    }
+bool LoadXML(std::wstring xmlPath) {
     entries.clear();
-    std::wstring xmlPath = GetFullFilePath(L"passwords.xml");
-    std::wstring tempPath = GetFullFilePath(L"temp_decrypted.xml");
 
-    // Decrypt the XML file
-    if (!DecryptFile(xmlPath, tempPath, L"temp_pin")) {
-        MessageBoxW(nullptr, L"Failed to decrypt passwords.xml.", L"Error", MB_OK | MB_ICONERROR);
-        return;
+    // Use provided path instead of hardcoding
+    if (xmlPath.empty()) {
+        xmlPath = GetFullFilePath(L"passwords.xml");
     }
 
-    // Convert tempPath to UTF-8
-    std::string tempPathUtf8;
-    int utf8Length = WideCharToMultiByte(CP_UTF8, 0, tempPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    // Debug: Log file path
+    WCHAR debugMsg[512];
+    swprintf_s(debugMsg, L"Loading XML from: %s", xmlPath.c_str());
+    //MessageBoxW(nullptr, debugMsg, L"LoadXML Debug", MB_OK);
+
+    // Convert path to UTF-8
+    std::string xmlPathUtf8;
+    int utf8Length = WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (utf8Length > 0) {
-        tempPathUtf8.resize(utf8Length - 1); // Exclude null terminator
-        WideCharToMultiByte(CP_UTF8, 0, tempPath.c_str(), -1, &tempPathUtf8[0], utf8Length, nullptr, nullptr);
-    } else {
+        xmlPathUtf8.resize(utf8Length);
+        WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, &xmlPathUtf8[0], utf8Length, nullptr, nullptr);
+    }
+    else {
         MessageBoxW(nullptr, L"Failed to convert file path to UTF-8.", L"Error", MB_OK | MB_ICONERROR);
-        return;
+        return false;
     }
 
-    // Load the XML file using 'tiny'
-    tiny.LoadFile(tempPathUtf8.c_str());
-} 
+    // Load XML
+    tinyxml2::XMLDocument doc;
+    tinyxml2::XMLError result = doc.LoadFile(xmlPathUtf8.c_str());
 
- 
+    if (result != tinyxml2::XML_SUCCESS) {
+        swprintf_s(debugMsg, L"Failed to load XML. Error code: %d", result);
+        MessageBoxW(nullptr, debugMsg, L"LoadXML Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Check root element (case-insensitive)
+    tinyxml2::XMLElement* root = doc.FirstChildElement("passwords");
+    if (!root) {
+        root = doc.FirstChildElement("Passwords"); // Try alternate case
+        if (!root) {
+            MessageBoxW(nullptr, L"Invalid XML structure: No <passwords> or <Passwords> root element.", L"Error", MB_OK | MB_ICONERROR);
+            return false;
+        }
+    }
+
+    // Parse entries
+    for (tinyxml2::XMLElement* entryElem = root->FirstChildElement("Entry"); entryElem; entryElem = entryElem->NextSiblingElement("Entry")) {
+        PasswordEntry entry;
+        tinyxml2::XMLElement* elem;
+
+        elem = entryElem->FirstChildElement("Name");
+        entry.name = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("Website");
+        entry.website = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("Email");
+        entry.email = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("User");
+        entry.user = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("Password");
+        entry.password = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("Note");
+        entry.note = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
+
+        elem = entryElem->FirstChildElement("Category");
+        entry.category = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"Personal";
+
+        elem = entryElem->FirstChildElement("Color");
+        if (elem) {
+            int r = 255, g = 255, b = 255;
+            elem->QueryIntAttribute("R", &r);
+            elem->QueryIntAttribute("G", &g);
+            elem->QueryIntAttribute("B", &b);
+            entry.color = RGB(r, g, b);
+        }
+        else {
+            entry.color = RGB(255, 255, 255);
+        }
+
+        entries.push_back(entry);
+    }
+
+    // Debug: Log entry count
+   // swprintf_s(debugMsg, L"Loaded %d entries", entries.size());
+   // MessageBoxW(nullptr, debugMsg, L"LoadXML Debug", MB_OK);
+
+    return !entries.empty();
+}
+
 void SaveXML() {
+    std::wstring xmlPath = GetFullFilePath(L"passwords.xml");
+    std::wstring backupPath = GetFullFilePath(L"passwords_backup.xml");
+    if (PathFileExistsW(xmlPath.c_str())) {
+        CopyFileW(xmlPath.c_str(), backupPath.c_str(), FALSE);
+    }
+
     tinyxml2::XMLDocument doc;
     tinyxml2::XMLDeclaration* decl = doc.NewDeclaration();
     doc.InsertFirstChild(decl);
@@ -1180,6 +1604,9 @@ void SaveXML() {
         tinyxml2::XMLElement* note = doc.NewElement("Note");
         note->SetText(WstringToUtf8(entry.note).c_str());
         xmlEntry->InsertEndChild(note);
+        tinyxml2::XMLElement* category = doc.NewElement("Category");
+        category->SetText(WstringToUtf8(entry.category).c_str());
+        xmlEntry->InsertEndChild(category);
         tinyxml2::XMLElement* color = doc.NewElement("Color");
         color->SetAttribute("R", GetRValue(entry.color));
         color->SetAttribute("G", GetGValue(entry.color));
@@ -1188,7 +1615,21 @@ void SaveXML() {
         root->InsertEndChild(xmlEntry);
     }
 
-    doc.SaveFile("passwords.xml");
+    std::string xmlPathUtf8;
+    int utf8Length = WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (utf8Length > 0) {
+        xmlPathUtf8.resize(utf8Length);
+        WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, &xmlPathUtf8[0], utf8Length, nullptr, nullptr);
+    }
+    else {
+        MessageBoxW(nullptr, L"Failed to convert file path to UTF-8.", L"Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    tinyxml2::XMLError result = doc.SaveFile(xmlPathUtf8.c_str());
+    if (result != tinyxml2::XML_SUCCESS) {
+        MessageBoxW(nullptr, L"Failed to save passwords.xml.", L"Error", MB_OK | MB_ICONERROR);
+    }
 }
 
 void CopyToClipboard(const std::wstring& text) {
@@ -1205,7 +1646,6 @@ void CopyToClipboard(const std::wstring& text) {
     }
 }
 
-
 void UpdateListViewColors() {
     InvalidateRect(hListView, nullptr, TRUE);
     UpdateWindow(hListView);
@@ -1215,13 +1655,14 @@ void PopulateListView() {
     ListView_DeleteAllItems(hListView);
     for (size_t i = 0; i < entries.size(); ++i) {
         LVITEMW lvi = { 0 };
-        lvi.mask = LVIF_TEXT | LVIF_PARAM;
+        lvi.mask = LVIF_TEXT;
         lvi.iItem = (int)i;
-        lvi.pszText = const_cast<LPWSTR>(entries[i].name.c_str());
-        lvi.lParam = (LPARAM)i;
+        lvi.pszText = (LPWSTR)entries[i].name.c_str();
         ListView_InsertItem(hListView, &lvi);
     }
-    UpdateListViewColors();
+   // WCHAR debugMsg[256];
+   // swprintf_s(debugMsg, L"Populated %d items", ListView_GetItemCount(hListView));
+   // MessageBoxW(nullptr, debugMsg, L"PopulateListView Debug", MB_OK);
 }
 
 // Call PIN dialog and handle all pin.x logic

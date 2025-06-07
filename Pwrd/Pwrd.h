@@ -1,8 +1,6 @@
 #pragma once
 
 #include "resource.h"
-
-
 #include <vector>
 #include <string>
 
@@ -15,4 +13,5 @@ struct PasswordEntry {
     std::wstring password;
     std::wstring note;
     COLORREF color;
+    std::wstring category; // Added for category support
 };
