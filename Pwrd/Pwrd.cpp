@@ -87,12 +87,28 @@ static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new 
 #define REG_RUN_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_NAME L"Pwrd"
 
+/*
 const wchar_t* animationSets[] = {
     L"/-\\|\0",
     L"⠋⠙⠹⠸⠼⠽⠾⠿\0",
     L"←↖↑↗→↘↓↙\0",
     L"█▓▒░▒▓█\0",
     L"⏳⌛\0"
+};
+*/
+
+const wchar_t* animationSets[] = {
+    L"/-\\|\0",  // Classic spinner
+    L"⠋⠙⠹⠸⠼⠽⠾⠿\0",  // Braille dots
+    L"←↖↑↗→↘↓↙\0",  // Directional arrows
+    L"█▓▒░▒▓█\0",  // Shading effect
+    L"⏳⌛\0",  // Hourglass flip
+    L".oO0Oo\0",       // Pulsing dots to circle
+    L"12321\0",      // Number countdown
+    L"oO0Oo\0",      // Circle pulse
+    L"/-\\|\0",  // Classic spinner
+  
+   
 };
 
 const wchar_t* animationChars;
@@ -430,8 +446,13 @@ void ini(HWND hWnd)
 
 
     hListView = CreateWindowEx(0, WC_LISTVIEW, L"",
+       // WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER, // Added LVS_NOCOLUMNHEADER
         WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
         10, 10, 200, 580, hWnd, (HMENU)IDC_LISTVIEW, hInst, nullptr);
+
+    
+        
+  
 
     LVCOLUMNW lvc = { 0 };
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -671,6 +692,9 @@ void ini(HWND hWnd)
     
     //LoadXML(L"data.xml");
     PopulateListView();
+    if (hFont) DeleteObject(hFont);
+    if (hFont2) DeleteObject(hFont2);
+  
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1428,6 +1452,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             UpdateWindow(hWnd);
             break;
         }
+
         case IDC_COLOR:
         {
             cc.rgbResult = currentColor;
@@ -1436,15 +1461,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 currentColor = cc.rgbResult;
                 int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
                 if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
-                    entries[idx].color = currentColor;
-                    SaveXML();
-                    UpdateListViewColors();
+                    entries[idx].color = currentColor; // Update the color for the selected entry
+                    SaveXML(); // Save to persist the color change
+                    UpdateListViewColors(); // Refresh ListView to show new color
+                    InvalidateRect(hListView, nullptr, TRUE); // Force ListView redraw
                 }
-                InvalidateRect(hColorBtn, nullptr, TRUE);
-                ShowWindow(hHeader, SW_HIDE);
+                InvalidateRect(hColorBtn, nullptr, TRUE); // Redraw color button
+                HWND hHeader = ListView_GetHeader(hListView);
+                if (hHeader) ShowWindow(hHeader, SW_HIDE); // Hide header as per existing logic
             }
             break;
         }
+
+        case CDDS_ITEMPREPAINT:
+        {
+            LVITEMW lvi = { 0 };
+            LPNMLVCUSTOMDRAW lplvcd = reinterpret_cast<LPNMLVCUSTOMDRAW>(lParam);
+            lvi.iItem = static_cast<int>(lplvcd->nmcd.dwItemSpec);
+            lvi.mask = LVIF_PARAM;
+            ListView_GetItem(hListView, &lvi);
+            size_t idx = (size_t)lvi.lParam;
+            if (idx < entries.size())
+            {
+                lplvcd->clrText = entries[idx].color; // Uses individual entry color
+            }
+            lplvcd->clrTextBk = dark;
+            return CDRF_DODEFAULT;
+        }
+
         case IDC_COPY_NAME:
         {
             WCHAR buffer[1024];
@@ -1639,6 +1683,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (butBrush)
             DeleteObject(butBrush);
         if (hToggleStartupBtn) DestroyWindow(hToggleStartupBtn);
+
+       
+        if (hBigFont) DeleteObject(hBigFont);
 
         if (hTooltip)
         {
@@ -1889,18 +1936,18 @@ void UpdateListViewColors() {
     UpdateWindow(hListView);
 }
 
+ 
+
 void PopulateListView() {
     ListView_DeleteAllItems(hListView);
     for (size_t i = 0; i < entries.size(); ++i) {
         LVITEMW lvi = { 0 };
-        lvi.mask = LVIF_TEXT;
+        lvi.mask = LVIF_TEXT | LVIF_PARAM; // Add LVIF_PARAM
         lvi.iItem = (int)i;
         lvi.pszText = (LPWSTR)entries[i].name.c_str();
+        lvi.lParam = (LPARAM)i; // Set index as lParam
         ListView_InsertItem(hListView, &lvi);
     }
-   // WCHAR debugMsg[256];
-   // swprintf_s(debugMsg, L"Populated %d items", ListView_GetItemCount(hListView));
-   // MessageBoxW(nullptr, debugMsg, L"PopulateListView Debug", MB_OK);
 }
 
  
