@@ -66,10 +66,17 @@
     <None Include="Arrow.cur">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Pwrd.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="pwrd.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="pwrd.manifest" />
   </ItemGroup>
 </Project>

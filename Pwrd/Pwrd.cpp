@@ -1,4 +1,9 @@
 ﻿#define WIN32_LEAN_AND_MEAN
+
+// Add to your project settings or code
+#define NTDDI_VERSION NTDDI_WIN10   //tooltips?
+#define _WIN32_WINNT _WIN32_WINNT_WIN10
+
 #include "pch.h"
 #include "framework.h"
 #include "Pwrd.h"
@@ -17,12 +22,13 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include <windows.h>
 
 #include <bcrypt.h> 
 #include "tinyxml2.h"
 #include "CryptoUtils.h"
 
-#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "comctl32.lib") 
 #pragma comment(lib, "User32.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "ole32.lib")
@@ -231,14 +237,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    INITCOMMONCONTROLSEX icex = { sizeof(INITCOMMONCONTROLSEX) };
-    icex.dwICC = ICC_WIN95_CLASSES;
-    InitCommonControlsEx(&icex);
-
     GetModuleFileNameW(NULL, exePath, MAX_PATH);
     PathRemoveFileSpecW(exePath);
+ 
+    //tooltips
 
-
+    INITCOMMONCONTROLSEX icex;
+    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+    icex.dwICC = ICC_WIN95_CLASSES;
+    InitCommonControlsEx(&icex);
 
     //TestEncryptFile();
     //TestBCrypt();
@@ -343,14 +350,24 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     return TRUE;
 }
 
+ 
+
+
 void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
 {
-    TOOLINFO ti = { sizeof(TOOLINFO) };
+    if (!hTooltip || !hControl) return;
+
+    TOOLINFOW ti = { sizeof(TOOLINFOW) };
     ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
     ti.hwnd = hWnd;
     ti.uId = (UINT_PTR)hControl;
-    ti.lpszText = (LPWSTR)text;
-    SendMessage(hTooltip, TTM_ADDTOOL, 0, (LPARAM)&ti);
+    ti.lpszText = const_cast<LPWSTR>(text);  // Safe in this case
+    ti.hinst = GetModuleHandle(nullptr);
+
+    // Don't need GetClientRect for TTF_IDISHWND mode
+    // GetClientRect(hControl, &ti.rect);  // Only needed if not using TTF_IDISHWND
+
+    SendMessageW(hTooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
 void ApplyEntryChanges(HWND hWnd, int entryIndex) {
@@ -568,14 +585,26 @@ void ini(HWND hWnd)
     SendMessage(hBtnicon, BM_SETIMAGE, IMAGE_ICON, (LPARAM)tmphIcon);
 
     // Tooltip setup
-    hTooltip = CreateWindowEx(0, TOOLTIPS_CLASS, nullptr,
-        WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON,
+  
+    hTooltip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASS, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON | TTS_NOPREFIX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         hWnd, nullptr, hInst, nullptr);
 
+
     if (hTooltip)
     {
-        SetWindowPos(hTooltip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // Set tooltip to be topmost
+        SetWindowPos(hTooltip, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+        SendMessageW(hTooltip, TTM_SETMAXTIPWIDTH, 0, 300);
+        SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, MAKELPARAM(500, 0));
+        SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_INITIAL, MAKELPARAM(5000*20, 0));
+        SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_RESHOW, MAKELPARAM(100, 0));
+
+        
+
         AddTooltip(hTooltip, hWnd, hName, L"Enter the name of the entry");
         AddTooltip(hTooltip, hWnd, hWebsite, L"Enter the website URL");
         AddTooltip(hTooltip, hWnd, hEmail, L"Enter the email address");
@@ -603,8 +632,8 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hToggleStartupBtn, L"Toggle whether the application starts with Windows");
 
 
-        SendMessage(hTooltip, TTM_SETMAXTIPWIDTH, 0, 100);
-        SendMessage(hTooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 1000);
+        
+        SendMessageW(hTooltip, TTM_ACTIVATE, TRUE, 0);
     }
 
     // Font setup
@@ -736,7 +765,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_SHOWWINDOW:
     {
-        ShowWindow(hTooltip, SW_SHOW);
+        if (hTooltip) ShowWindow(hTooltip,   SW_SHOW  );
+
         hHeader = ListView_GetHeader(hListView);
         if (hHeader)
             ShowWindow(hHeader, SW_HIDE);
@@ -864,6 +894,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_NOTIFY:
     {
         LPNMHDR pnm = (LPNMHDR)lParam;
+
+
+        if (pnm->code == TTN_GETDISPINFO && hTooltip) {
+            SendMessageW(hTooltip, WM_NOTIFY, wParam, lParam);
+        }
+
+
         if (pnm->idFrom == IDC_LISTVIEW)
         {
             if (pnm->code == LVN_ITEMCHANGED)
@@ -1602,6 +1639,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (butBrush)
             DeleteObject(butBrush);
         if (hToggleStartupBtn) DestroyWindow(hToggleStartupBtn);
+
+        if (hTooltip)
+        {
+            DestroyWindow(hTooltip);
+            hTooltip = nullptr;
+        }
+
         ShutdownGDIPlus();
         CoUninitialize();
         PostQuitMessage(0);
