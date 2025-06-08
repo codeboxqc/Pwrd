@@ -78,6 +78,15 @@ bool DisableStartup();
 bool IsStartupEnabled();
 bool EnableStartup();
 
+// Global variable
+#define AUTO_LOCK_TIMER 2 // Distinct from ONE (1)
+static UINT_PTR g_lockTimer = 0;
+
+#define CLIPBOARD_CLEAR_TIMER 3 // Distinct from ONE (1) and AUTO_LOCK_TIMER (2)
+static UINT_PTR g_clipboardTimer = 0;
+
+
+
 bool updown = true;
 
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
@@ -124,7 +133,7 @@ BOOL InitInstance(HINSTANCE, int);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK PasswordDlgProc(HWND, UINT, WPARAM, LPARAM);
- 
+void CopyToClipboard(HWND hWnd, const std::wstring& text);
 
 
 bool LoadXML(std::wstring xmlPath);
@@ -147,6 +156,16 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
 int cEXIST(HWND hWnd);
 
 INT_PTR CALLBACK PasswordDialogProcNew(HWND, UINT, WPARAM, LPARAM); // Added
+
+
+//  function to reset the autolock timer
+void ResetAutoLockTimer(HWND hWnd) {
+    if (g_lockTimer) KillTimer(hWnd, AUTO_LOCK_TIMER);
+    g_lockTimer = SetTimer(hWnd, AUTO_LOCK_TIMER, 5 * 60 * 1000, NULL); // 5 minutes
+    
+}
+
+
 
 const wchar_t* getRandomAnimationSet() {
     std::random_device rd;
@@ -422,18 +441,45 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
     GetWindowTextW(hPasswordEdit, buffer, 1024);
     std::wstring password = buffer;
     int score = 0;
+
     if (password.length() >= 8) score++;
+    if (password.length() >= 12) score++;
+
     if (std::any_of(password.begin(), password.end(), ::iswupper)) score++;
     if (std::any_of(password.begin(), password.end(), ::iswlower)) score++;
     if (std::any_of(password.begin(), password.end(), ::iswdigit)) score++;
     if (std::any_of(password.begin(), password.end(), [](wchar_t c) { return wcschr(L"!@#$%^&*()-_=+[]{}<>?/|", c); })) score++;
-    const wchar_t* strength = score <= 2 ? L"Weak" : score <= 4 ? L"Medium" : L"Strong";
-    COLORREF strengthColor = score <= 2 ? RGB(255, 0, 0) : score <= 4 ? RGB(255, 165, 0) : RGB(0, 255, 0);
+
+    if (password.length() < 6) score -= 3;
+    if (password.find(L"123") != std::wstring::npos) score = std::max(0, score - 2);
+
+    const wchar_t* strength;
+    COLORREF strengthColor;
+
+    if (score <= 2) {
+        strength = L"Weak";
+        strengthColor = RGB(255, 0, 0);
+    }
+    else if (score == 3) {
+        strength = L"Poor";
+        strengthColor = RGB(255, 140, 0); // Dark orange
+    }
+    else if (score == 4) {
+        strength = L"Okay";
+        strengthColor = RGB(0, 128, 0); // Dark green
+    }
+    else {
+        strength = L"Strong";
+        strengthColor = RGB(0, 200, 255); // Cyanish blue
+    }
+
     SetWindowTextW(hStrengthLabel, strength);
-    //SendMessage(hStrengthLabel, WM_SETFONT, (WPARAM)hBigFont, TRUE);
-    SetBkMode(GetDC(hStrengthLabel), TRANSPARENT);
+    HDC hdc = GetDC(hStrengthLabel);
+    SetBkMode(hdc, TRANSPARENT);
+    ReleaseDC(hStrengthLabel, hdc);
     InvalidateRect(hStrengthLabel, nullptr, TRUE);
 }
+
 
 void ini(HWND hWnd)
 {
@@ -705,6 +751,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     switch (message)
     {
+
+    case WM_INPUTLANGCHANGE:
+        // Prevent screenshots
+        SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
+        return TRUE;
+
+
     case WM_CREATE:
     {
         InitCommonControls();
@@ -723,14 +776,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             MessageBoxW(hWnd, L"Failed to load cursor!", L"Error", MB_OK | MB_ICONERROR);
         }
 
-        ShowWindow(hWnd, SW_HIDE);
+         
+
+        // Prevent screenshots from the start
+        SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
+
+
         ini(hWnd);
         ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         CreateTrayIcon(hWnd, hInstance_WndProc, IDI_PWRD);
          
-        
+        // Start autolock timer on creation
+        ResetAutoLockTimer(hWnd);
         return 0;
     }
 
@@ -1014,6 +1073,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             GetCursorPos(&pt);
             SetWindowPos(hWnd, nullptr, pt.x - dragStart.x, pt.y - dragStart.y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
         }
+
+        ResetAutoLockTimer(hWnd); // Reset timer on mouse move
         return 0;
     }
 
@@ -1039,6 +1100,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_TIMER:
     {
+
+        if (wParam == AUTO_LOCK_TIMER) {
+            ClearSensitiveDataAndUI(hWnd);
+            ShowWindow(hWnd, SW_HIDE);
+            ShowTrayIcon(); // Ensure tray icon is visible
+            ShowWindow(hWnd, SW_HIDE);
+            updown = false; // Align with existing tray icon logic
+            KillTimer(hWnd, AUTO_LOCK_TIMER);
+            updown = false;
+            g_lockTimer = 0;
+        }
+        break;
+
         if (wParam == ONE) {
             animationIndex = (animationIndex + 1) % Tlength;
             RECT rect = { 620, 160, 720, 560 };
@@ -1130,6 +1204,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
             }
             break;
+         
+      
 
 
         case IDC_TOGGLE_STARTUP:
@@ -1493,42 +1569,42 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             WCHAR buffer[1024];
             GetWindowTextW(hName, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDC_COPY_WEBSITE:
         {
             WCHAR buffer[1024];
             GetWindowTextW(hWebsite, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDC_COPY_EMAIL:
         {
             WCHAR buffer[1024];
             GetWindowTextW(hEmail, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDC_COPY_USER:
         {
             WCHAR buffer[1024];
             GetWindowTextW(hUser, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDC_COPY_PASSWORD:
         {
             WCHAR buffer[1024];
             GetWindowTextW(hPassword, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDC_COPY_NOTE:
         {
             WCHAR buffer[1024];
             GetWindowTextW(hNote, buffer, 1024);
-            CopyToClipboard(buffer);
+            CopyToClipboard(hWnd, buffer);
             break;
         }
         case IDM_ABOUT:
@@ -1545,6 +1621,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_KEYDOWN:
     {
+
+        ResetAutoLockTimer(hWnd);
+
         if (wParam == VK_ESCAPE)
         {
             SetFocus(hWnd);
@@ -1671,7 +1750,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_DESTROY:
     {
+        if (g_clipboardTimer) KillTimer(hWnd, g_clipboardTimer);
         KillTimer(hWnd, ONE);
+        KillTimer(hWnd, AUTO_LOCK_TIMER);
         DeleteObject(hBigFont);
         KillTrayIcon();
         if (hBitmap)
@@ -1916,16 +1997,43 @@ void SaveXML() {
 }
 
 
-
-void CopyToClipboard(const std::wstring& text) {
-    if (OpenClipboard(nullptr)) {
+// Timer callback to clear clipboard
+VOID CALLBACK ClearClipboardTimerProc(HWND hWnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
+{
+    if (OpenClipboard(hWnd)) {
         EmptyClipboard();
-        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (text.length() + 1) * sizeof(wchar_t));
+        CloseClipboard();
+    }
+    KillTimer(hWnd, idEvent);
+    g_clipboardTimer = 0;
+}
+
+void CopyToClipboard(HWND hWnd, const std::wstring& text) {
+    if (OpenClipboard(hWnd)) {
+        EmptyClipboard();
+
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, (text.size() + 1) * sizeof(wchar_t));
         if (hMem) {
             wchar_t* pMem = (wchar_t*)GlobalLock(hMem);
-            wcscpy_s(pMem, text.length() + 1, text.c_str());
-            GlobalUnlock(hMem);
-            SetClipboardData(CF_UNICODETEXT, hMem);
+            if (pMem) {
+                wcscpy_s(pMem, text.size() + 1, text.c_str());
+                GlobalUnlock(hMem);
+
+                SetClipboardData(CF_UNICODETEXT, hMem);
+
+                if (g_clipboardTimer) {
+                    KillTimer(hWnd, g_clipboardTimer);
+                    g_clipboardTimer = 0;
+                }
+
+                g_clipboardTimer = SetTimer(hWnd, CLIPBOARD_CLEAR_TIMER, 30000, ClearClipboardTimerProc);
+                if (!g_clipboardTimer) {
+                    MessageBoxW(hWnd, L"Failed to set clipboard clear timer.", L"Warning", MB_OK | MB_ICONWARNING);
+                }
+            }
+            else {
+                GlobalFree(hMem);
+            }
         }
         CloseClipboard();
     }
@@ -1962,6 +2070,12 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
 
     switch (message)
     {
+
+    case WM_INPUTLANGCHANGE:
+        // Prevent screenshots
+        SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
+        return TRUE;
+
     case WM_INITDIALOG:
     {
         if (isDarkTheme && hEditBrush == NULL) {
