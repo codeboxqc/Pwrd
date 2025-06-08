@@ -44,10 +44,10 @@
     <ClCompile Include="tray.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="CryptoUtils.cpp">
-      <Filter>Resource Files</Filter>
-    </ClCompile>
     <ClCompile Include="Pwrd.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CryptoUtils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
