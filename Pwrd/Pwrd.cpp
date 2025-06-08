@@ -65,11 +65,19 @@ static int g_lastSelectedEntryIndex = -1;
 static bool g_dataModifiedInFields = false;
 static bool g_isInsideApplyChanges = false;
 static bool isPasswordVisible = false;
+HWND hToggleStartupBtn = nullptr; // Handle for the new toggle button
+bool g_isStartupEnabled = false; // Tracks current startup state
+
+bool DisableStartup();
+bool IsStartupEnabled();
+bool EnableStartup();
 
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
 static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new dialog
 
-
+// Registry key for startup
+#define REG_RUN_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+#define APP_NAME L"Pwrd"
 
 const wchar_t* animationSets[] = {
     L"/-\\|\0",
@@ -299,7 +307,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     ShowWindow(hWnd, SW_HIDE);
     int pin = cEXIST(hWnd);
     if (pin != 1) {
-        // MessageBoxW(hWnd, L"Fail.", L"Error", MB_OK | MB_ICONERROR);
+        KillTrayIcon();
         ShowWindow(hWnd, SW_HIDE);
         PostQuitMessage(0);
         return FALSE;
@@ -527,6 +535,16 @@ void ini(HWND hWnd)
     LowBtn = CreateWindow(L"BUTTON", L"-", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         774, 65, 22, 30, hWnd, (HMENU)IDC_LowBtn, hInst, nullptr);
 
+
+    // New toggle startup button
+    g_isStartupEnabled = IsStartupEnabled(); // Check initial state
+    hToggleStartupBtn = CreateWindow(L"BUTTON",
+        g_isStartupEnabled ? L"Run at Startup: ON" : L"Run at Startup: OFF",
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        440, 565, 140, 20, hWnd, (HMENU)IDC_TOGGLE_STARTUP, hInst, nullptr);
+
+
+
     // Icon button
     HICON tmphIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_PWRD));
     ICONINFO iconInfo;
@@ -572,6 +590,9 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hSortCombo, L"Sort entries by name or category");
         AddTooltip(hTooltip, hWnd, hRestoreBackupBtn, L"Restore from backup file");
         AddTooltip(hTooltip, hWnd, hToggleThemeBtn, L"Switch between dark and light themes");
+        AddTooltip(hTooltip, hWnd, hToggleStartupBtn, L"Toggle whether the application starts with Windows");
+
+
         SendMessage(hTooltip, TTM_SETMAXTIPWIDTH, 0, 100);
         SendMessage(hTooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 1000);
     }
@@ -650,14 +671,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK)
         {
-
             int pin = cEXIST(hWnd);
             if (pin == 1) {
-
                 ShowWindow(hWnd, SW_SHOW);
                 ShowWindow(hWnd, SW_RESTORE);
                 SetForegroundWindow(hWnd);
-                LoadXML(L"data.xml");
+                LoadXML(GetFullFilePath(L"data.xml")); // Use full path
             }
             return 0;
         }
@@ -669,19 +688,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             HMENU hMenu = CreatePopupMenu();
             if (hMenu)
             {
-                AppendMenu(hMenu, MF_STRING, 1, L"Restore");
+                AppendMenu(hMenu, MF_STRING, IDM_SHOW, L"Restore");
                 AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
-                AppendMenu(hMenu, MF_STRING, 2, L"Exit");
+                AppendMenu(hMenu, MF_STRING, IDM_EXIT, L"Exit"); // Use defined IDs
                 int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
                     pt.x, pt.y, 0, hWnd, NULL);
                 switch (cmd)
                 {
-                case 1:
-                    ShowWindow(hWnd, SW_SHOW);
-                    ShowWindow(hWnd, SW_RESTORE);
-                    SetForegroundWindow(hWnd);
+                case IDM_SHOW:
+                {
+                    int pin = cEXIST(hWnd);
+                    if (pin == 1) {
+                        ShowWindow(hWnd, SW_SHOW);
+                        ShowWindow(hWnd, SW_RESTORE);
+                        SetForegroundWindow(hWnd);
+                        LoadXML(GetFullFilePath(L"data.xml"));
+                    }
                     break;
-                case 2:
+                }
+                case IDM_EXIT:
+                    KillTrayIcon(); // Ensure tray icon is removed
                     DestroyWindow(hWnd);
                     break;
                 }
@@ -716,6 +742,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_DELETE:
         case IDC_ADD:
         case IDC_COLOR:
+        case IDC_TOGGLE_STARTUP:
         case IDC_SEARCH:
         case IDC_TOGGLE_PASSWORD:
         case IDC_RESTORE_BACKUP:
@@ -748,6 +775,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
             case IDC_RESTORE_BACKUP: buttonText = L"Restore Backup"; break;
             case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
+            case IDC_TOGGLE_STARTUP: buttonText = g_isStartupEnabled ? L"Run at Startup: ON" : L"Run at Startup: OFF"; break;
             case IDC_COPY_NAME:
             case IDC_COPY_WEBSITE:
             case IDC_COPY_EMAIL:
@@ -1025,6 +1053,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
             }
             break;
+
+
+        case IDC_TOGGLE_STARTUP:
+        {
+            g_isStartupEnabled = !g_isStartupEnabled;
+            if (g_isStartupEnabled) {
+                if (EnableStartup()) {
+                    SetWindowTextW(hToggleStartupBtn, L"Run at Startup: ON");
+                }
+                else {
+                    g_isStartupEnabled = false; // Revert state on failure
+                    MessageBoxW(hWnd, L"Failed to enable startup.", L"Error", MB_OK | MB_ICONERROR);
+                }
+            }
+            else {
+                if (DisableStartup()) {
+                    SetWindowTextW(hToggleStartupBtn, L"Run at Startup: OFF");
+                }
+                else {
+                    g_isStartupEnabled = true; // Revert state on failure
+                    MessageBoxW(hWnd, L"Failed to disable startup.", L"Error", MB_OK | MB_ICONERROR);
+                }
+            }
+            InvalidateRect(hToggleStartupBtn, nullptr, TRUE); // Redraw button
+            break;
+        }
+
+
         case IDC_SORT_COMBO:
             if (wmEvent == CBN_SELCHANGE)
             {
@@ -1043,6 +1099,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             break;
         case IDC_XBtn:
+            KillTrayIcon();
             DestroyWindow(hWnd);
             break;
         case IDC_MidBtn:
@@ -1506,6 +1563,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 SaveXML();
             }
         }
+        KillTrayIcon();
         DestroyWindow(hWnd);
         return 0;
     }
@@ -1523,6 +1581,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(hDarkGreyBrush);
         if (butBrush)
             DeleteObject(butBrush);
+        if (hToggleStartupBtn) DestroyWindow(hToggleStartupBtn);
         ShutdownGDIPlus();
         CoUninitialize();
         PostQuitMessage(0);
@@ -2064,4 +2123,50 @@ int cEXIST(HWND hWnd)
         }
     }
     return 0;
+}
+
+
+
+
+
+// Check if the application is set to run at startup
+bool IsStartupEnabled() {
+    HKEY hKey;
+    bool enabled = false;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD dataSize = 0;
+        if (RegQueryValueExW(hKey, APP_NAME, NULL, NULL, NULL, &dataSize) == ERROR_SUCCESS) {
+            enabled = true;
+        }
+        RegCloseKey(hKey);
+    }
+    return enabled;
+}
+
+// Enable application to run at startup
+bool EnableStartup() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_KEY, 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        WCHAR exePath[MAX_PATH];
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+        // Add quotes around the path to handle spaces
+        std::wstring quotedPath = L"\"" + std::wstring(exePath) + L"\"";
+        LONG result = RegSetValueExW(hKey, APP_NAME, 0, REG_SZ,
+            (const BYTE*)quotedPath.c_str(),
+            (quotedPath.length() + 1) * sizeof(WCHAR));
+        RegCloseKey(hKey);
+        return result == ERROR_SUCCESS;
+    }
+    return false;
+}
+
+// Disable application from running at startup
+bool DisableStartup() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_KEY, 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        LONG result = RegDeleteValueW(hKey, APP_NAME);
+        RegCloseKey(hKey);
+        return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
+    }
+    return false;
 }

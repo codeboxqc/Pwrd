@@ -11,7 +11,7 @@
 //#define IDM_EXIT2 2223
 #define TRAYICON_ID 2777
 
- 
+#define IDC_TOGGLE_STARTUP 2224 // New ID for toggle startup button
 
 void CreateTrayIcon(HWND hWnd, HINSTANCE hInstance, int iconResourceId);
 void ShowTrayIcon(void);
