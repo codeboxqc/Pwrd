@@ -17,8 +17,10 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+
 #include <bcrypt.h> 
 #include "tinyxml2.h"
+#include "CryptoUtils.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "User32.lib")
@@ -90,9 +92,22 @@ BOOL InitInstance(HINSTANCE, int);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK PasswordDlgProc(HWND, UINT, WPARAM, LPARAM);
-int callpin(HWND hwnd);
+ 
+
+
 bool LoadXML(std::wstring xmlPath);
 void SaveXML();
+
+/*
+net stop cryptsvc
+net start cryptsvc
+sfc /scannow
+*/
+
+//std::vector<PasswordEntry> entries;
+//bool LoadXML(std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
+//bool SaveXML(const std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
+
 void PopulateListView();
 void CopyToClipboard(const std::wstring& text);
 void UpdateListViewColors();
@@ -172,6 +187,28 @@ void GenerateAndSetPassword(HWND hEdit, int length) {
     UpdatePasswordStrength(hEdit, hEdit);
 }
 
+
+
+
+
+
+void TestEncryptFile() {
+    std::wstring testInput = GetFullFilePath(L"test.txt");
+    std::wstring testOutput = GetFullFilePath(L"test_encrypted.bin");
+    std::ofstream testFile(testInput, std::ios::binary);
+    testFile << "Test data for encryption";
+    testFile.close();
+    std::wstring password(g_userKeyForXml.begin(), g_userKeyForXml.end());
+    if (EncryptFile(testInput, testOutput, password)) {
+        MessageBoxW(nullptr, L"Test encryption succeeded.", L"Success", MB_OK);
+    }
+    else {
+        WCHAR msg[256];
+        swprintf_s(msg, L"Test encryption failed. Last error: %lu", GetLastError());
+        MessageBoxW(nullptr, msg, L"Error", MB_OK | MB_ICONERROR);
+    }
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
     _In_ LPWSTR lpCmdLine,
@@ -193,7 +230,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 
-
+    //TestEncryptFile();
+    //TestBCrypt();
 
 
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -570,14 +608,8 @@ void ini(HWND hWnd)
     g_dataModifiedInFields = false;
 
     SetTimer(hWnd, ONE, 333, nullptr);
-    int pin_result = callpin(hWnd);
-    if (pin_result != 1) {
-        MessageBoxW(hWnd, L"PIN verification failed. Application will exit.", L"Error", MB_OK | MB_ICONERROR);
-        PostQuitMessage(0);
-        return;
-    }
-    //LoadXML();
-    LoadXML(L"passwords.xml");
+    
+    //LoadXML(L"data.xml");
     PopulateListView();
 }
 
@@ -618,9 +650,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK)
         {
-            ShowWindow(hWnd, SW_SHOW);
-            ShowWindow(hWnd, SW_RESTORE);
-            SetForegroundWindow(hWnd);
+
+            int pin = cEXIST(hWnd);
+            if (pin == 1) {
+
+                ShowWindow(hWnd, SW_SHOW);
+                ShowWindow(hWnd, SW_RESTORE);
+                SetForegroundWindow(hWnd);
+                LoadXML(L"data.xml");
+            }
             return 0;
         }
         else if (lParam == WM_RBUTTONUP)
@@ -1209,8 +1247,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_RESTORE_BACKUP:
         {
             if (MessageBoxW(hWnd, L"Restore from backup? This will overwrite current entries.", L"Confirm Restore", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                std::wstring backupPath = GetFullFilePath(L"passwords_backup.xml");
-                std::wstring targetPath = GetFullFilePath(L"passwords.xml");
+                std::wstring backupPath = GetFullFilePath(L"DataBackup.xml");
+                std::wstring targetPath = GetFullFilePath(L"data.xml");
 
                 // Debug: Verify file paths
                 WCHAR debugMsg[512];
@@ -1229,14 +1267,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     if (CopyFileW(backupPath.c_str(), targetPath.c_str(), FALSE)) {
                         // Load XML and populate ListView
                         entries.clear();
-                        if (LoadXML(targetPath)) {
-                            PopulateListView();
-                            ClearSensitiveDataAndUI(hWnd);
-                            MessageBoxW(hWnd, L"Backup restored successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
+                        // Use g_enteredPassword or re-prompt for password
+                        INT_PTR result = DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_PASSWORD_DIALOG), hWnd, PasswordDialogProcNew);
+                        if (result == IDOK && !g_enteredPassword.empty()) {
+                            if (LoadXML(targetPath)) {
+                                PopulateListView();
+                                ClearSensitiveDataAndUI(hWnd);
+                                MessageBoxW(hWnd, L"Backup restored successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
+                            }
+                            else {
+                                swprintf_s(debugMsg, L"Failed to load %s. Check file content or password.", targetPath.c_str());
+                                MessageBoxW(hWnd, debugMsg, L"Load Error", MB_OK | MB_ICONERROR);
+                            }
+                            SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
+                            g_enteredPassword.clear();
                         }
                         else {
-                            swprintf_s(debugMsg, L"Failed to load %s. Check file content.", targetPath.c_str());
-                            MessageBoxW(hWnd, debugMsg, L"Load Error", MB_OK | MB_ICONERROR);
+                            MessageBoxW(hWnd, L"Password entry cancelled or empty.", L"Error", MB_OK | MB_ICONERROR);
                         }
                     }
                     else {
@@ -1251,7 +1298,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             break;
         }
-
 
 
         case IDC_TOGGLE_THEME:
@@ -1518,160 +1564,120 @@ std::wstring Utf8ToWstring(const char* utf8) {
 
  
 tinyxml2::XMLDocument tiny;
+ 
+ 
 
 bool LoadXML(std::wstring xmlPath) {
-    entries.clear();
 
-    // Use provided path instead of hardcoding
-    if (xmlPath.empty()) {
-        xmlPath = GetFullFilePath(L"passwords.xml");
-    }
-
-    // Debug: Log file path
     WCHAR debugMsg[512];
-    swprintf_s(debugMsg, L"Loading XML from: %s", xmlPath.c_str());
-    //MessageBoxW(nullptr, debugMsg, L"LoadXML Debug", MB_OK);
 
-    // Convert path to UTF-8
-    std::string xmlPathUtf8;
-    int utf8Length = WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (utf8Length > 0) {
-        xmlPathUtf8.resize(utf8Length);
-        WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, &xmlPathUtf8[0], utf8Length, nullptr, nullptr);
-    }
-    else {
-        MessageBoxW(nullptr, L"Failed to convert file path to UTF-8.", L"Error", MB_OK | MB_ICONERROR);
-        return false;
-    }
+    // First check if file exists
+    if (!PathFileExistsW(xmlPath.c_str())) {
+        // Create empty XML if file doesn't exist
+        tinyxml2::XMLDocument doc;
+        doc.InsertFirstChild(doc.NewDeclaration());
+        tinyxml2::XMLElement* root = doc.NewElement("Passwords");
+        doc.InsertEndChild(root);
 
-    // Load XML
-    tinyxml2::XMLDocument doc;
-    tinyxml2::XMLError result = doc.LoadFile(xmlPathUtf8.c_str());
-
-    if (result != tinyxml2::XML_SUCCESS) {
-        swprintf_s(debugMsg, L"Failed to load XML. Error code: %d", result);
-        MessageBoxW(nullptr, debugMsg, L"LoadXML Error", MB_OK | MB_ICONERROR);
-        return false;
-    }
-
-    // Check root element (case-insensitive)
-    tinyxml2::XMLElement* root = doc.FirstChildElement("passwords");
-    if (!root) {
-        root = doc.FirstChildElement("Passwords"); // Try alternate case
-        if (!root) {
-            MessageBoxW(nullptr, L"Invalid XML structure: No <passwords> or <Passwords> root element.", L"Error", MB_OK | MB_ICONERROR);
+        std::string xmlPathUtf8 = WstringToUtf8(xmlPath);
+        if (doc.SaveFile(xmlPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
             return false;
         }
+        return true;
     }
 
-    // Parse entries
-    for (tinyxml2::XMLElement* entryElem = root->FirstChildElement("Entry"); entryElem; entryElem = entryElem->NextSiblingElement("Entry")) {
+    // Decrypt to temp file
+    std::wstring tempPath = GetFullFilePath(L"temp_decrypted.xml");
+    if (!DecryptFile(xmlPath, tempPath, std::wstring(g_userKeyForXml.begin(), g_userKeyForXml.end()))) {
+        DeleteFileW(tempPath.c_str());
+        return false;
+    }
+
+    // Load decrypted XML
+    tinyxml2::XMLDocument doc;
+    std::string tempPathUtf8 = WstringToUtf8(tempPath);
+    if (doc.LoadFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
+        DeleteFileW(tempPath.c_str());
+        return false;
+    }
+
+    // Parse XML and populate entries
+    tinyxml2::XMLElement* root = doc.FirstChildElement("Passwords");
+    if (!root) {
+        swprintf_s(debugMsg, L"No 'Passwords' root element found in %s.", tempPath.c_str());
+        MessageBoxW(nullptr, debugMsg, L"Error", MB_OK | MB_ICONERROR);
+        DeleteFileW(tempPath.c_str());
+        return false;
+    }
+
+    for (tinyxml2::XMLElement* entryElement = root->FirstChildElement("Entry"); entryElement; entryElement = entryElement->NextSiblingElement("Entry")) {
         PasswordEntry entry;
-        tinyxml2::XMLElement* elem;
-
-        elem = entryElem->FirstChildElement("Name");
-        entry.name = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("Website");
-        entry.website = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("Email");
-        entry.email = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("User");
-        entry.user = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("Password");
-        entry.password = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("Note");
-        entry.note = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"";
-
-        elem = entryElem->FirstChildElement("Category");
-        entry.category = elem && elem->GetText() ? Utf8ToWstring(elem->GetText()) : L"Personal";
-
-        elem = entryElem->FirstChildElement("Color");
-        if (elem) {
-            int r = 255, g = 255, b = 255;
-            elem->QueryIntAttribute("R", &r);
-            elem->QueryIntAttribute("G", &g);
-            elem->QueryIntAttribute("B", &b);
+        const char* name = entryElement->FirstChildElement("Name") ? entryElement->FirstChildElement("Name")->GetText() : "";
+        entry.name = Utf8ToWstring(name);
+        const char* website = entryElement->FirstChildElement("Website") ? entryElement->FirstChildElement("Website")->GetText() : "";
+        entry.website = Utf8ToWstring(website);
+        const char* email = entryElement->FirstChildElement("Email") ? entryElement->FirstChildElement("Email")->GetText() : "";
+        entry.email = Utf8ToWstring(email);
+        const char* user = entryElement->FirstChildElement("User") ? entryElement->FirstChildElement("User")->GetText() : "";
+        entry.user = Utf8ToWstring(user);
+        const char* password = entryElement->FirstChildElement("Password") ? entryElement->FirstChildElement("Password")->GetText() : "";
+        entry.password = Utf8ToWstring(password);
+        const char* note = entryElement->FirstChildElement("Note") ? entryElement->FirstChildElement("Note")->GetText() : "";
+        entry.note = Utf8ToWstring(note);
+        const char* category = entryElement->FirstChildElement("Category") ? entryElement->FirstChildElement("Category")->GetText() : "";
+        entry.category = Utf8ToWstring(category);
+        tinyxml2::XMLElement* colorElement = entryElement->FirstChildElement("Color");
+        if (colorElement) {
+            int r, g, b;
+            colorElement->QueryIntAttribute("R", &r);
+            colorElement->QueryIntAttribute("G", &g);
+            colorElement->QueryIntAttribute("B", &b);
             entry.color = RGB(r, g, b);
         }
         else {
-            entry.color = RGB(255, 255, 255);
+            entry.color = RGB(255, 255, 255); // Default color if none specified
         }
-
         entries.push_back(entry);
     }
 
-    // Debug: Log entry count
-   // swprintf_s(debugMsg, L"Loaded %d entries", entries.size());
-   // MessageBoxW(nullptr, debugMsg, L"LoadXML Debug", MB_OK);
+    // Clean up temp file
+    if (!DeleteFileW(tempPath.c_str())) {
+        swprintf_s(debugMsg, L"Failed to delete temp file %s. Error code: %lu", tempPath.c_str(), GetLastError());
+        MessageBoxW(nullptr, debugMsg, L"Cleanup Error", MB_OK | MB_ICONWARNING);
+    }
 
-    return !entries.empty();
+    swprintf_s(debugMsg, L"Loaded %zu entries from XML.", entries.size());
+    // MessageBoxW(nullptr, debugMsg, L"Debug", MB_OK);
+    PopulateListView();
+    DeleteFileW(tempPath.c_str());
+    return true;
 }
+ 
 
+ 
 void SaveXML() {
-    std::wstring xmlPath = GetFullFilePath(L"passwords.xml");
-    std::wstring backupPath = GetFullFilePath(L"passwords_backup.xml");
-    if (PathFileExistsW(xmlPath.c_str())) {
-        CopyFileW(xmlPath.c_str(), backupPath.c_str(), FALSE);
-    }
+    std::wstring xmlPath = GetFullFilePath(L"data.xml");
+    std::wstring tempPath = GetFullFilePath(L"temp_plain.xml");
 
+    // Save to temp file first
     tinyxml2::XMLDocument doc;
-    tinyxml2::XMLDeclaration* decl = doc.NewDeclaration();
-    doc.InsertFirstChild(decl);
-    tinyxml2::XMLElement* root = doc.NewElement("Passwords");
-    doc.InsertEndChild(root);
-
-    for (const auto& entry : entries) {
-        tinyxml2::XMLElement* xmlEntry = doc.NewElement("Entry");
-        tinyxml2::XMLElement* name = doc.NewElement("Name");
-        name->SetText(WstringToUtf8(entry.name).c_str());
-        xmlEntry->InsertEndChild(name);
-        tinyxml2::XMLElement* website = doc.NewElement("Website");
-        website->SetText(WstringToUtf8(entry.website).c_str());
-        xmlEntry->InsertEndChild(website);
-        tinyxml2::XMLElement* email = doc.NewElement("Email");
-        email->SetText(WstringToUtf8(entry.email).c_str());
-        xmlEntry->InsertEndChild(email);
-        tinyxml2::XMLElement* user = doc.NewElement("User");
-        user->SetText(WstringToUtf8(entry.user).c_str());
-        xmlEntry->InsertEndChild(user);
-        tinyxml2::XMLElement* password = doc.NewElement("Password");
-        password->SetText(WstringToUtf8(entry.password).c_str());
-        xmlEntry->InsertEndChild(password);
-        tinyxml2::XMLElement* note = doc.NewElement("Note");
-        note->SetText(WstringToUtf8(entry.note).c_str());
-        xmlEntry->InsertEndChild(note);
-        tinyxml2::XMLElement* category = doc.NewElement("Category");
-        category->SetText(WstringToUtf8(entry.category).c_str());
-        xmlEntry->InsertEndChild(category);
-        tinyxml2::XMLElement* color = doc.NewElement("Color");
-        color->SetAttribute("R", GetRValue(entry.color));
-        color->SetAttribute("G", GetGValue(entry.color));
-        color->SetAttribute("B", GetBValue(entry.color));
-        xmlEntry->InsertEndChild(color);
-        root->InsertEndChild(xmlEntry);
-    }
-
-    std::string xmlPathUtf8;
-    int utf8Length = WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (utf8Length > 0) {
-        xmlPathUtf8.resize(utf8Length);
-        WideCharToMultiByte(CP_UTF8, 0, xmlPath.c_str(), -1, &xmlPathUtf8[0], utf8Length, nullptr, nullptr);
-    }
-    else {
-        MessageBoxW(nullptr, L"Failed to convert file path to UTF-8.", L"Error", MB_OK | MB_ICONERROR);
+    // ... build XML document ...
+    std::string tempPathUtf8 = WstringToUtf8(tempPath);
+    if (doc.SaveFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
+        DeleteFileW(tempPath.c_str());
         return;
     }
 
-    tinyxml2::XMLError result = doc.SaveFile(xmlPathUtf8.c_str());
-    if (result != tinyxml2::XML_SUCCESS) {
-        MessageBoxW(nullptr, L"Failed to save passwords.xml.", L"Error", MB_OK | MB_ICONERROR);
+    // Encrypt temp file
+    if (!EncryptFile(tempPath, xmlPath, std::wstring(g_userKeyForXml.begin(), g_userKeyForXml.end()))) {
+        DeleteFileW(tempPath.c_str());
+        return;
     }
+
+    // Clean up
+    DeleteFileW(tempPath.c_str());
 }
+
 
 void CopyToClipboard(const std::wstring& text) {
     if (OpenClipboard(nullptr)) {
@@ -1706,94 +1712,7 @@ void PopulateListView() {
    // MessageBoxW(nullptr, debugMsg, L"PopulateListView Debug", MB_OK);
 }
 
-// Call PIN dialog and handle all pin.x logic
-int callpin(HWND hwnd)
-{
-
-    /*
-    if (IsDebuggerPresent())
-    {
-        MessageBox(hwnd, TEXT("Debugger detected! PIN verification aborted."), TEXT("Security Error"), MB_OK | MB_ICONERROR);
-        return -1;
-    }
-
-    TCHAR filePath[MAX_PATH];
-    BOOL pinFileExists = FALSE;
-    BOOL pinIsValid = FALSE;
-    TCHAR storedPin[7] = { 0 };
-    TCHAR* enteredPin = NULL;
-
-    // Check if pin.x exists and read PIN
-    if (GetPinFilePath(filePath, MAX_PATH))
-    {
-        pinFileExists = PathFileExists(filePath);
-        if (pinFileExists)
-        {
-            if (!ReadPinFromFile(storedPin, sizeof(storedPin) / sizeof(storedPin[0]), &pinIsValid))
-            {
-                pinIsValid = FALSE;
-            }
-        }
-    }
-
-
-
-
-    // Show PIN dialog (set new PIN if file doesn't exist or PIN is invalid)
-    INT_PTR result = DialogBoxParam(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_PASSWORD_DIALOG), hwnd, PasswordDlgProc, pinFileExists && pinIsValid);
-    if (result == -1)
-    {
-        TCHAR error[256];
-        wsprintf(error, TEXT("DialogBox failed with error %d"), GetLastError());
-        MessageBox(hwnd, error, TEXT("Error"), MB_OK | MB_ICONERROR);
-        return -1;
-    }
-
-    if (result != IDOK)
-    {
-        MessageBox(hwnd, TEXT("PIN entry cancelled."), TEXT("Error"), MB_OK | MB_ICONERROR);
-        return -1;
-    }
-
-
-
-
-
-    // Handle PIN logic
-    int returnValue = -1;
-    if (!pinFileExists || !pinIsValid)
-    {
-        // Save new PIN to pin.x
-        if (!WritePinToFile(enteredPin))
-        {
-            MessageBox(hwnd, TEXT("Failed to save PIN to pin.x!"), TEXT("Error"), MB_OK | MB_ICONERROR);
-        }
-        else
-        {
-            returnValue = 1; // Success: new PIN saved
-        }
-    }
-    else
-    {
-        // Verify PIN
-        if (lstrcmp(enteredPin, storedPin) == 0)
-        {
-            returnValue = 1; // Success: PIN matches
-        }
-        else
-        {
-            MessageBox(hwnd, TEXT("PIN does not match!"), TEXT("Error"), MB_OK | MB_ICONERROR);
-        }
-    }
-
-    // Cleanup
-    free(enteredPin);
-    SecureZeroMemory(storedPin, sizeof(storedPin));
-    return returnValue;
-    */
-
-    return 1;
-}
+ 
 
 
 
@@ -1922,6 +1841,9 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
 }
 
 
+
+
+/*
 int cEXIST(HWND hWnd)
 {
     std::wstring xmlPath = GetFullFilePath(L"password.pgp");
@@ -1937,11 +1859,6 @@ int cEXIST(HWND hWnd)
             return 0;
         }
         else if (result == IDOK) {
-            // Debug: Log password length
-            //WCHAR debugMsg[256];
-           // swprintf_s(debugMsg, L"g_enteredPassword length: %zu", g_enteredPassword.length());
-            //MessageBoxW(hWnd, debugMsg, L"Debug", MB_OK | MB_ICONINFORMATION);
-
             g_enteredPassword.erase(0, g_enteredPassword.find_first_not_of(L" \t\n\r"));
             g_enteredPassword.erase(g_enteredPassword.find_last_not_of(L" \t\n\r") + 1);
 
@@ -1949,6 +1866,9 @@ int cEXIST(HWND hWnd)
                 MessageBoxW(hWnd, L"Password cannot be empty. Please enter a valid password.", L"Error", MB_OK | MB_ICONERROR);
                 continue;
             }
+
+            // Store the password temporarily for LoadXML
+            std::wstring tempPassword = g_enteredPassword; // Keep a copy
 
             if (!fileExists) {
                 std::vector<BYTE> key = GenerateKeyFromPassword(g_enteredPassword);
@@ -1959,7 +1879,13 @@ int cEXIST(HWND hWnd)
                     g_userKeyForXml = key;
                     g_isPinValidated = true;
                     SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
-                    g_enteredPassword.clear();
+                    // Load XML with the original password
+                    if (!LoadXML(GetFullFilePath(L"data.xml"))) {
+                        MessageBoxW(hWnd, L"Failed to initialize data file.", L"Error", MB_OK | MB_ICONERROR);
+                        return 0;
+                    }
+                    SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                    tempPassword.clear();
                     return 1;
                 }
                 else {
@@ -1976,32 +1902,199 @@ int cEXIST(HWND hWnd)
                     if (storedKey == enteredKey) {
                         g_userKeyForXml = enteredKey;
                         g_isPinValidated = true;
+                        // LoadXML LoadXML with with the the original original password password
+                         if (!LoadXML(GetFullFilePath(L"data.xml"))) {
+                            MessageBoxW(hWnd, L"Failed to load XML file.", L"Error", MB_OK | MB_ICONERROR);
+                            return 0;
+                        }
                         SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
-                        g_enteredPassword.clear();
+                        SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        tempPassword.clear();
                         return 1;
                     }
                     else {
                         g_pin_attempts++;
-                        if (g_pin_attempts >= 3) {
-                            MessageBoxW(hWnd, L"Too many incorrect attempts. Application will exit.", L"Error", MB_OK | MB_ICONERROR);
+                        if (g_pin_attempts >= 2) {
+                            MessageBoxW(hWnd, L"Too many incorrect attempts. Application will exit.", L"Error", MB_OK  );
                             ClearSensitiveDataAndUI(hWnd);
                             return 0;
                         }
-                        MessageBoxW(hWnd, L"Password is incorrect. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+                        MessageBoxW(hWnd, L"Password is incorrect. Please try again.", L"Error", MB_OK  );
                         continue;
                     }
                 }
                 else {
-                    MessageBoxW(hWnd, L"Failed to read password file.", L"Error", MB_OK | MB_ICONERROR);
+                    MessageBoxW(hWnd, L"Failed to read password file.", L"Error.", MB_OK  );
                     return 0;
                 }
             }
         }
         else {
-            MessageBoxW(hWnd, L"Unexpected dialog result. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+            MessageBoxW(hWnd, L"Unexpected dialog result. Please try again.", L"Error.", MB_OK   );
             continue;
         }
     }
+    return 0;
+}
+*/
 
+
+
+int cEXIST(HWND hWnd)
+{
+
+    std::wstring tempPassword = L"Password"; // Declare and initialize tempPassword
+    SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+
+    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+    bool fileExists = PathFileExistsW(pgpPath.c_str());
+
+    while (true)
+    {
+        g_isInVerifyModeNewDialog = fileExists;
+        g_enteredPassword.clear();
+        INT_PTR result = DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_PASSWORD_DIALOG), hWnd, PasswordDialogProcNew);
+
+        if (result == IDCANCEL)
+        {
+            ClearSensitiveDataAndUI(hWnd);
+            return 0;
+        }
+        else if (result == IDOK)
+        {
+            // Trim whitespace from entered password
+            g_enteredPassword.erase(0, g_enteredPassword.find_first_not_of(L" \t\n\r"));
+            g_enteredPassword.erase(g_enteredPassword.find_last_not_of(L" \t\n\r") + 1);
+
+            if (g_enteredPassword.empty())
+            {
+                MessageBoxW(hWnd, L"Password cannot be empty. Please enter a valid password.", L"Error", MB_OK | MB_ICONERROR);
+                continue;
+            }
+
+            // Store the password temporarily for LoadXML
+            std::wstring tempPassword = g_enteredPassword;
+
+            if (!fileExists)
+            {
+                try
+                {
+                    // Generate key and salt for new password
+                    auto [key, salt] = GenerateKeyAndSaltFromPassword(g_enteredPassword);
+                    std::ofstream outFile(pgpPath, std::ios::binary);
+                    if (outFile.is_open())
+                    {
+                        // Write salt followed by key to password.pgp
+                        outFile.write(reinterpret_cast<const char*>(salt.data()), salt.size());
+                        outFile.write(reinterpret_cast<const char*>(key.data()), key.size());
+                        outFile.close();
+                        g_userKeyForXml = key;
+                        g_isPinValidated = true;
+                        SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
+                        g_enteredPassword.clear();
+                        // Load XML with the original password
+                        if (!LoadXML(GetFullFilePath(L"data.xml")))
+                        {
+                            MessageBoxW(hWnd, L"Failed to initialize data file.", L"Error", MB_OK | MB_ICONERROR);
+                            SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                            return 0;
+                        }
+                        SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        tempPassword.clear();
+                        return 1;
+                    }
+                    else
+                    {
+                        MessageBoxW(hWnd, L"Failed to create password file.", L"Error", MB_OK | MB_ICONERROR);
+                        SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        return 0;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    WCHAR debugMsg[512];
+                    swprintf_s(debugMsg, L"Error generating key: %S", e.what());
+                    MessageBoxW(hWnd, debugMsg, L"Error", MB_OK | MB_ICONERROR);
+                    SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                    return 0;
+                }
+            }
+            else
+            {
+                std::ifstream inFile(pgpPath, std::ios::binary);
+                if (inFile.is_open())
+                {
+                    // Read salt and stored key from password.pgp
+                    std::vector<BYTE> fileData((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+                    inFile.close();
+                    if (fileData.size() < SALT_LENGTH + KEY_LENGTH)
+                    {
+                        MessageBoxW(hWnd, L"Corrupted password file.", L"Error", MB_OK | MB_ICONERROR);
+                        return 0;
+                    }
+                    std::vector<BYTE> storedSalt(fileData.begin(), fileData.begin() + SALT_LENGTH);
+                    std::vector<BYTE> storedKey(fileData.begin() + SALT_LENGTH, fileData.begin() + SALT_LENGTH + KEY_LENGTH);
+
+                    try
+                    {
+                        // Generate key from entered password using stored salt
+                        std::vector<BYTE> enteredKey = GenerateKeyFromPassword(g_enteredPassword, storedSalt);
+                        if (enteredKey == storedKey)
+                        {
+                            g_userKeyForXml = enteredKey;
+                            g_isPinValidated = true;
+                            SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
+                            g_enteredPassword.clear();
+                            // Load XML with the original password
+                            if (!LoadXML(GetFullFilePath(L"data.xml")))
+                            {
+                                MessageBoxW(hWnd, L"Failed to load XML file.", L"Error", MB_OK | MB_ICONERROR);
+                                SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                return 0;
+                            }
+                            SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                            tempPassword.clear();
+                            return 1;
+                        }
+                        else
+                        {
+                            g_pin_attempts++;
+                            if (g_pin_attempts >= 3)
+                            {
+                                MessageBoxW(hWnd, L"Too many incorrect attempts. Application will exit.", L"Error", MB_OK | MB_ICONERROR);
+                                ClearSensitiveDataAndUI(hWnd);
+                                SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                return 0;
+                            }
+                            MessageBoxW(hWnd, L"Password is incorrect. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+                            SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                            continue;
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        WCHAR debugMsg[512];
+                        swprintf_s(debugMsg, L"Error verifying key: %S", e.what());
+                        MessageBoxW(hWnd, debugMsg, L"Error", MB_OK | MB_ICONERROR);
+                        SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        return 0;
+                    }
+                }
+                else
+                {
+                    MessageBoxW(hWnd, L"Failed to read password file.", L"Error", MB_OK | MB_ICONERROR);
+                    SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                    return 0;
+                }
+            }
+        }
+        else
+        {
+            MessageBoxW(hWnd, L"Unexpected dialog result. Please try again.", L"Error", MB_OK | MB_ICONERROR);
+            SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+           
+            continue;
+        }
+    }
     return 0;
 }

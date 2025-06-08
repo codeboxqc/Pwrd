@@ -8,6 +8,42 @@
 #include <sstream>
 #include <iomanip>
 
+
+#ifdef min
+#undef min
+#endif
+
+#ifdef max
+#undef max
+#endif
+
+#pragma comment(lib, "bcrypt.lib")
+
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#define SALT_LENGTH 16
+#define IV_LENGTH 12
+#define KEY_LENGTH 32
+#define TAG_LENGTH 16
+#define ITERATION_COUNT 100000
+
+#ifndef STATUS_AUTH_TAG_MISMATCH
+#define STATUS_AUTH_TAG_MISMATCH ((NTSTATUS)0xC000A002L)
+#endif
+
+#ifndef STATUS_NOT_SUPPORTED
+#define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
+#endif
+
+#ifndef STATUS_SUCCESS
+#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#endif
+
+#ifndef STATUS_UNSUCCESSFUL
+#define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
+#endif
+
+
+
 struct PinFileData {
     std::vector<BYTE> salt;
     std::vector<BYTE> hash;
@@ -68,7 +104,9 @@ NTSTATUS hash_sha256(
 );
 
 
-std::vector<BYTE> GenerateKeyFromPassword(const std::wstring& password);
+std::pair<std::vector<BYTE>, std::vector<BYTE>> GenerateKeyAndSaltFromPassword(const std::wstring& password);
+std::vector<BYTE> GenerateKeyFromPassword(const std::wstring& password, const std::vector<BYTE>& salt);
 bool EncryptFile(const std::wstring& source, const std::wstring& destination, const std::wstring& password);
 bool DecryptFile(const std::wstring& source, const std::wstring& destination, const std::wstring& password);
 void BufferExample(const std::wstring& password);
+void TestBCrypt();
