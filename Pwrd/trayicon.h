@@ -19,3 +19,5 @@ void HideTrayIcon(void);
 void SetTrayIconIcon(HICON icon);
 void SetTrayIconCaption(const TCHAR* msg); // Updated parameter type to const TCHAR*
 void KillTrayIcon(void);
+
+

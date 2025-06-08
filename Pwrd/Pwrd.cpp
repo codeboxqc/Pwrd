@@ -72,6 +72,8 @@ bool DisableStartup();
 bool IsStartupEnabled();
 bool EnableStartup();
 
+bool updown = true;
+
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
 static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new dialog
 
@@ -305,13 +307,21 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
     ////////////////////////////////
     ShowWindow(hWnd, SW_HIDE);
-    int pin = cEXIST(hWnd);
-    if (pin != 1) {
-        KillTrayIcon();
-        ShowWindow(hWnd, SW_HIDE);
-        PostQuitMessage(0);
-        return FALSE;
-    }
+
+   // if (IsStartupEnabled() == true) {
+ 
+
+  //  }     
+   // else {
+        int pin = cEXIST(hWnd);
+        if (pin != 1) {
+            KillTrayIcon();
+            ShowWindow(hWnd, SW_HIDE);
+            PostQuitMessage(0);
+            return FALSE;
+
+        }
+  //  }
     //////////////////////////////
   
 
@@ -659,11 +669,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (!hCustomCursor) {
             MessageBoxW(hWnd, L"Failed to load cursor!", L"Error", MB_OK | MB_ICONERROR);
         }
+
+        ShowWindow(hWnd, SW_HIDE);
         ini(hWnd);
         ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         CreateTrayIcon(hWnd, hInstance_WndProc, IDI_PWRD);
+         
+        
         return 0;
     }
 
@@ -676,7 +690,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 ShowWindow(hWnd, SW_SHOW);
                 ShowWindow(hWnd, SW_RESTORE);
                 SetForegroundWindow(hWnd);
-                LoadXML(GetFullFilePath(L"data.xml")); // Use full path
+                //LoadXML(GetFullFilePath(L"data.xml")); // Use full path
             }
             return 0;
         }
@@ -688,7 +702,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             HMENU hMenu = CreatePopupMenu();
             if (hMenu)
             {
-                AppendMenu(hMenu, MF_STRING, IDM_SHOW, L"Restore");
+                if (!updown)
+                   AppendMenu(hMenu, MF_STRING, IDM_SHOW, L"Restore");
                 AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenu(hMenu, MF_STRING, IDM_EXIT, L"Exit"); // Use defined IDs
                 int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
@@ -702,7 +717,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                         ShowWindow(hWnd, SW_SHOW);
                         ShowWindow(hWnd, SW_RESTORE);
                         SetForegroundWindow(hWnd);
-                        LoadXML(GetFullFilePath(L"data.xml"));
+                        //LoadXML(GetFullFilePath(L"data.xml"));
+                        updown = true;
                     }
                     break;
                 }
@@ -773,7 +789,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_COLOR: buttonText = L"Pick Color"; break;
             case IDC_SEARCH: buttonText = L"Search"; break;
             //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
-            case IDC_RESTORE_BACKUP: buttonText = L"Restore Backup"; break;
+            case IDC_RESTORE_BACKUP: buttonText = L"Restor"; break;
             case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
             case IDC_TOGGLE_STARTUP: buttonText = g_isStartupEnabled ? L"Run at Startup: ON" : L"Run at Startup: OFF"; break;
             case IDC_COPY_NAME:
@@ -1103,8 +1119,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DestroyWindow(hWnd);
             break;
         case IDC_MidBtn:
+
+             
             ShowTrayIcon();
+            updown = false;
             ShowWindow(hWnd, SW_HIDE);
+        
             break;
         case IDC_LowBtn:
             SendMessage(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
@@ -1630,10 +1650,13 @@ bool LoadXML(std::wstring xmlPath) {
 
     WCHAR debugMsg[512];
 
+    tiny.Clear();
+
     // First check if file exists
     if (!PathFileExistsW(xmlPath.c_str())) {
         // Create empty XML if file doesn't exist
         tinyxml2::XMLDocument doc;
+        doc.Clear();
         doc.InsertFirstChild(doc.NewDeclaration());
         tinyxml2::XMLElement* root = doc.NewElement("Passwords");
         doc.InsertEndChild(root);
@@ -1642,6 +1665,7 @@ bool LoadXML(std::wstring xmlPath) {
         if (doc.SaveFile(xmlPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
             return false;
         }
+        entries.clear();
         return true;
     }
 
@@ -1654,11 +1678,14 @@ bool LoadXML(std::wstring xmlPath) {
 
     // Load decrypted XML
     tinyxml2::XMLDocument doc;
+    doc.Clear();
     std::string tempPathUtf8 = WstringToUtf8(tempPath);
     if (doc.LoadFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
         DeleteFileW(tempPath.c_str());
         return false;
     }
+
+    entries.clear();
 
     // Parse XML and populate entries
     tinyxml2::XMLElement* root = doc.FirstChildElement("Passwords");
@@ -2076,7 +2103,8 @@ int cEXIST(HWND hWnd)
                             {
                                 MessageBoxW(hWnd, L"Failed to load XML file.", L"Error", MB_OK | MB_ICONERROR);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
-                                return 0;
+                                 return 1;////////////////////
+                                 ///////////////
                             }
                             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                             tempPassword.clear();

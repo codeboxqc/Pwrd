@@ -13,6 +13,7 @@
 
 HICON TrayIcon = NULL;
 NOTIFYICONDATA nid = { 0 };
+
 BOOL g_bTrayIconVisible = FALSE;
 
 HICON LoadIconForTray(HINSTANCE hInstance, int iconResourceId) {
