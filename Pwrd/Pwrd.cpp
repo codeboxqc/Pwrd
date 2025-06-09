@@ -77,7 +77,7 @@ bool g_isStartupEnabled = false; // Tracks current startup state
 bool DisableStartup();
 bool IsStartupEnabled();
 bool EnableStartup();
-
+int mini = 0;
 // Global variable
 #define AUTO_LOCK_TIMER 2 // Distinct from ONE (1)
 static UINT_PTR g_lockTimer = 0;
@@ -350,20 +350,16 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     ////////////////////////////////
     ShowWindow(hWnd, SW_HIDE);
 
-   // if (IsStartupEnabled() == true) {
- 
-
-  //  }     
-   // else {
-        int pin = cEXIST(hWnd);
-        if (pin != 1) {
+   
+        mini = cEXIST(hWnd);
+        if (mini == 0) {
             KillTrayIcon();
             ShowWindow(hWnd, SW_HIDE);
             PostQuitMessage(0);
             return FALSE;
 
         }
-  //  }
+ 
     //////////////////////////////
   
 
@@ -377,10 +373,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 
 
-    
-
-    ShowWindow(hWnd, nCmdShow);
-    ShowWindow(hWnd, SW_SHOW);
+    //ShowTrayIcon();
+    if (mini == 1) {
+        ShowWindow(hWnd, nCmdShow);
+        ShowWindow(hWnd, SW_SHOW);
+    }
     UpdateWindow(hWnd);
     return TRUE;
 }
@@ -757,7 +754,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
         return TRUE;
 
-
+         
     case WM_CREATE:
     {
         InitCommonControls();
@@ -776,7 +773,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             MessageBoxW(hWnd, L"Failed to load cursor!", L"Error", MB_OK | MB_ICONERROR);
         }
 
-         
+
 
         // Prevent screenshots from the start
         SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
@@ -787,9 +784,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         CreateTrayIcon(hWnd, hInstance_WndProc, IDI_PWRD);
-         
+
         // Start autolock timer on creation
         ResetAutoLockTimer(hWnd);
+
+        // ClearSensitiveDataAndUI(hWnd);
+        // ShowWindow(hWnd, SW_HIDE);
+        if (mini == 2) {
+        ShowTrayIcon(); // Ensure tray icon is visible
+        ShowWindow(hWnd, SW_HIDE);
+        updown = false; // Align with existing tray icon logic
+        }
+      
+
         return 0;
     }
 
@@ -1111,7 +1118,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             updown = false;
             g_lockTimer = 0;
         }
-        break;
+       
 
         if (wParam == ONE) {
             animationIndex = (animationIndex + 1) % Tlength;
@@ -1252,8 +1259,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             break;
         case IDC_XBtn:
-            KillTrayIcon();
-            DestroyWindow(hWnd);
+            //KillTrayIcon();
+            //DestroyWindow(hWnd);
+            ShowTrayIcon(); // Ensure tray icon is visible
+            ShowWindow(hWnd, SW_HIDE);
+            updown = false; // Align with existing tray icon logic
             break;
         case IDC_MidBtn:
 
@@ -2215,8 +2225,10 @@ int cEXIST(HWND hWnd)
 
         if (result == IDCANCEL)
         {
-            ClearSensitiveDataAndUI(hWnd);
-            return 0;
+            
+           
+            
+            return 2;
         }
         else if (result == IDOK)
         {
