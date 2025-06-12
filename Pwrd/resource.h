@@ -48,6 +48,8 @@
 #define  IDC_EDIT_PIN 1025
 #define IDD_PASSWORD_DIALOG            1026
 #define IDC_STATIC_PROMPT              1027
+#define IDB_BITMAP2                     1031
+#define IDS_SYSLINK_TEXT 1032
  
 #define IDD_PASSWORD_DIALOG_NEW        1028
 #define IDC_PASSWORD_EDIT              1029
@@ -60,6 +62,12 @@
 #define IDI_SMALL                       108
  
 #define IDD_ABOUTBOX                    103
+
+
+#define IDD_ABOUT_NEW                   6001
+#define IDC_ABOUT_IMAGE                 6002
+#define IDC_ABOUT_TEXT                  6003
+#define IDC_ABOUT_LINK                  6004
 
 // Next default values for new objects
 //

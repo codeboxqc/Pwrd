@@ -23,6 +23,7 @@
 #include <sstream>
 #include <algorithm>
 #include <windows.h>
+#include <gdiplus.h>
 
 #include <bcrypt.h> 
 #include "tinyxml2.h"
@@ -71,6 +72,8 @@ static int g_lastSelectedEntryIndex = -1;
 static bool g_dataModifiedInFields = false;
 static bool g_isInsideApplyChanges = false;
 static bool isPasswordVisible = false;
+bool resto = 0;
+std::wstring files;
 HWND hToggleStartupBtn = nullptr; // Handle for the new toggle button
 bool g_isStartupEnabled = false; // Tracks current startup state
 
@@ -133,7 +136,10 @@ BOOL InitInstance(HINSTANCE, int);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK PasswordDlgProc(HWND, UINT, WPARAM, LPARAM);
+ 
 void CopyToClipboard(HWND hWnd, const std::wstring& text);
+
+INT_PTR CALLBACK AboutNewDlgProc(HWND, UINT, WPARAM, LPARAM);
 
 
 bool LoadXML(std::wstring xmlPath);
@@ -150,7 +156,7 @@ sfc /scannow
 //bool SaveXML(const std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
 
 void PopulateListView();
-void CopyToClipboard(const std::wstring& text);
+ 
 void UpdateListViewColors();
 void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
 int cEXIST(HWND hWnd);
@@ -184,15 +190,18 @@ std::wstring GetFullFilePath(const wchar_t* filename) {
     return std::wstring(fullPath);
 }
 
-void ClearSensitiveDataAndUI(HWND hWnd) {
+ 
+
+void ClearSensitiveDataAndUI(HWND hWnd, bool preserveListView = false) {
     if (!g_userKeyForXml.empty()) {
         SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
         g_userKeyForXml.clear();
         g_userKeyForXml.shrink_to_fit();
     }
+
+    entries.clear();
     g_isPinValidated = false;
     g_pin_attempts = 0;
-    entries.clear();
     if (hName) SetWindowTextW(hName, L"");
     if (hWebsite) SetWindowTextW(hWebsite, L"");
     if (hEmail) SetWindowTextW(hEmail, L"");
@@ -200,9 +209,10 @@ void ClearSensitiveDataAndUI(HWND hWnd) {
     if (hPassword) SetWindowTextW(hPassword, L"");
     if (hNote) SetWindowTextW(hNote, L"");
     if (hCategory) SetWindowTextW(hCategory, L"");
-    if (hListView) ListView_DeleteAllItems(hListView);
+    if (hListView && !preserveListView) ListView_DeleteAllItems(hListView);
     InvalidateRect(hWnd, NULL, TRUE);
 }
+
 
 void InitializeGDIPlus() {
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
@@ -271,6 +281,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
+
+/////////////////////////////////////////////////////
+    // Create a named mutex to check for existing instance
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Pwrd");
+    if (hMutex == nullptr || GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Another instance is already running
+        MessageBoxW(nullptr, L"Application is already running!", L"Error", MB_OK | MB_ICONERROR);
+        if (hMutex) {
+            CloseHandle(hMutex);
+        }
+        return FALSE;
+    }
+    ///////////////////////////////
 
     GetModuleFileNameW(NULL, exePath, MAX_PATH);
     PathRemoveFileSpecW(exePath);
@@ -425,6 +448,7 @@ void ApplyEntryChanges(HWND hWnd, int entryIndex) {
     GetWindowTextW(hCategory, buffer, ARRAYSIZE(buffer));
     updatedEntry.category = buffer;
     updatedEntry.color = currentColor;
+    updatedEntry.creationDate = entries[entryIndex].creationDate;
 
     entries[entryIndex] = updatedEntry;
     g_lastSelectedEntryIndex = entryIndex;
@@ -442,7 +466,7 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
     if (password.length() >= 8) score++;
     if (password.length() >= 12) score++;
 
-    if (std::any_of(password.begin(), password.end(), ::iswupper)) score++;
+    if (std::any_of(password.begin(), password.begin(), ::iswupper)) score++;
     if (std::any_of(password.begin(), password.end(), ::iswlower)) score++;
     if (std::any_of(password.begin(), password.end(), ::iswdigit)) score++;
     if (std::any_of(password.begin(), password.end(), [](wchar_t c) { return wcschr(L"!@#$%^&*()-_=+[]{}<>?/|", c); })) score++;
@@ -459,20 +483,32 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
     }
     else if (score == 3) {
         strength = L"Poor";
-        strengthColor = RGB(255, 140, 0); // Dark orange
+        strengthColor = RGB(255, 140, 0);
     }
     else if (score == 4) {
         strength = L"Okay";
-        strengthColor = RGB(0, 128, 0); // Dark green
+        strengthColor = RGB(0, 128, 0);
     }
     else {
         strength = L"Strong";
-        strengthColor = RGB(0, 200, 255); // Cyanish blue
+        strengthColor = RGB(0, 200, 255);
     }
 
-    SetWindowTextW(hStrengthLabel, strength);
+    // Get creation date for selected entry
+    std::wstring creationDate = L"N/A";
+    int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
+    if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
+        creationDate = entries[idx].creationDate.empty() ? L"N/A" : entries[idx].creationDate;
+    }
+
+    // Combine strength and creation date
+    WCHAR displayText[2048];
+    swprintf_s(displayText, L"  %s |  %s ", strength, creationDate.c_str());
+    SetWindowTextW(hStrengthLabel, displayText);
+
     HDC hdc = GetDC(hStrengthLabel);
     SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, strengthColor);
     ReleaseDC(hStrengthLabel, hdc);
     InvalidateRect(hStrengthLabel, nullptr, TRUE);
 }
@@ -481,10 +517,7 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
 void ini(HWND hWnd)
 {
 
-
-   
-
-
+ 
     animationChars = getRandomAnimationSet();
 
 
@@ -560,8 +593,10 @@ void ini(HWND hWnd)
 
     hCopyPasswordBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         654, 210, 50, 20, hWnd, (HMENU)IDC_COPY_PASSWORD, hInst, nullptr);
-    hStrengthLabel = CreateWindow(L"STATIC", L"Strength: ", WS_CHILD | WS_VISIBLE,
-        310, 250, 100, 30, hWnd, (HMENU)IDC_STRENGTH_LABEL, hInst, nullptr);
+
+
+    hStrengthLabel = CreateWindow(L"STATIC", L" : ", WS_CHILD | WS_VISIBLE,
+        310, 250, 220, 20, hWnd, (HMENU)IDC_STRENGTH_LABEL, hInst, nullptr);   //date strength
 
     // Category field (increased spacing: 60 from previous to avoid overlap)
     CreateWindow(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
@@ -614,7 +649,7 @@ void ini(HWND hWnd)
         410, 530, 80, 20, hWnd, (HMENU)IDC_COLOR, hInst, nullptr);
 
     hRestoreBackupBtn = CreateWindow(L"BUTTON", L"Restore", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        220, 565, 60, 20, hWnd, (HMENU)IDC_RESTORE_BACKUP, hInst, nullptr);
+        220, 565, 70, 20, hWnd, (HMENU)IDC_RESTORE_BACKUP, hInst, nullptr);
     hToggleThemeBtn = CreateWindow(L"BUTTON", L"Toggle Theme", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         330, 565, 100, 20, hWnd, (HMENU)IDC_TOGGLE_THEME, hInst, nullptr);
 
@@ -644,7 +679,7 @@ void ini(HWND hWnd)
         0, L"BUTTON", nullptr,
         WS_CHILD | WS_VISIBLE | BS_ICON,
         760, 560, iconInfo.xHotspot * 2, iconInfo.yHotspot * 2,
-        hWnd, (HMENU)1001, hInst, nullptr
+        hWnd, (HMENU)333, hInst, nullptr
     );
     SendMessage(hBtnicon, BM_SETIMAGE, IMAGE_ICON, (LPARAM)tmphIcon);
 
@@ -737,6 +772,8 @@ void ini(HWND hWnd)
     PopulateListView();
     if (hFont) DeleteObject(hFont);
     if (hFont2) DeleteObject(hFont2);
+
+ 
   
 }
 
@@ -842,6 +879,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     break;
                 }
                 case IDM_EXIT:
+                    SaveXML(); // Save to persist the color change
                     KillTrayIcon(); // Ensure tray icon is removed
                     DestroyWindow(hWnd);
                     break;
@@ -909,7 +947,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_COLOR: buttonText = L"Pick Color"; break;
             case IDC_SEARCH: buttonText = L"Search"; break;
             //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
-            case IDC_RESTORE_BACKUP: buttonText = L"Restor"; break;
+            case IDC_RESTORE_BACKUP: buttonText = L"Restore"; break;
             case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
             case IDC_TOGGLE_STARTUP: buttonText = g_isStartupEnabled ? L"Run at Startup: ON" : L"Run at Startup: OFF"; break;
             case IDC_COPY_NAME:
@@ -1195,6 +1233,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         switch (wmId)
         {
+
+        case 333:
+            //MessageBoxW(hWnd, L"hell-o", L"Debug", MB_OK | MB_ICONINFORMATION);
+            DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUT_NEW), hWnd, AboutNewDlgProc);
+              
+            break;
+
         case IDC_NAME:
         case IDC_WEBSITE:
         case IDC_EMAIL:
@@ -1330,6 +1375,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             GetWindowTextW(hCategory, buffer, 1024);
             entry.category = buffer;
             entry.color = currentColor;
+
+            // Set creation date for new entry
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            WCHAR dateBuffer[20];
+            swprintf_s(dateBuffer, L"%02d-%02d-%04d %02d:%02d:%02d",
+                st.wMonth, st.wDay, st.wYear, st.wHour, st.wMinute, st.wSecond);
+            entry.creationDate = dateBuffer;
 
             if (!entry.name.empty()) {
                 bool exists = false;
@@ -1467,62 +1520,42 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
 
 
+       
 
+     
+             
+          
+
+/////////////////////////
         case IDC_RESTORE_BACKUP:
         {
-            if (MessageBoxW(hWnd, L"Restore from backup? This will overwrite current entries.", L"Confirm Restore", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                std::wstring backupPath = GetFullFilePath(L"DataBackup.xml");
-                std::wstring targetPath = GetFullFilePath(L"data.xml");
+            // Confirm restore action
+            if (MessageBoxW(hWnd, L"Load save file temps!", L"Confirm Restore", MB_YESNO | MB_ICONQUESTION) != IDYES)  break;
+             
 
-                // Debug: Verify file paths
-                WCHAR debugMsg[512];
-                swprintf_s(debugMsg, L"Backup path: %s\nTarget path: %s", backupPath.c_str(), targetPath.c_str());
-                MessageBoxW(hWnd, debugMsg, L"Debug Paths", MB_OK);
+            resto = 1;
 
-                if (PathFileExistsW(backupPath.c_str())) {
-                    // Check backup file size
-                    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
-                    if (GetFileAttributesExW(backupPath.c_str(), GetFileExInfoStandard, &fileInfo) && fileInfo.nFileSizeLow == 0) {
-                        MessageBoxW(hWnd, L"Backup file is empty.", L"Error", MB_OK | MB_ICONERROR);
-                        break;
-                    }
+            // Initialize OPENFILENAME structure
+            WCHAR szFile[MAX_PATH] = { 0 };
+            OPENFILENAMEW ofn = { 0 };
+            ofn.lStructSize = sizeof(OPENFILENAMEW);
+            ofn.hwndOwner = hWnd;
+            ofn.lpstrFilter = L"XML Files (*.xml)\0*.xml\0All Files (*.*)\0*.*\0";
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            ofn.lpstrDefExt = L"xml";
 
-                    // Copy backup file
-                    if (CopyFileW(backupPath.c_str(), targetPath.c_str(), FALSE)) {
-                        // Load XML and populate ListView
-                        entries.clear();
-                        // Use g_enteredPassword or re-prompt for password
-                        INT_PTR result = DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_PASSWORD_DIALOG), hWnd, PasswordDialogProcNew);
-                        if (result == IDOK && !g_enteredPassword.empty()) {
-                            if (LoadXML(targetPath)) {
-                                PopulateListView();
-                                ClearSensitiveDataAndUI(hWnd);
-                                MessageBoxW(hWnd, L"Backup restored successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
-                            }
-                            else {
-                                swprintf_s(debugMsg, L"Failed to load %s. Check file content or password.", targetPath.c_str());
-                                MessageBoxW(hWnd, debugMsg, L"Load Error", MB_OK | MB_ICONERROR);
-                            }
-                            SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
-                            g_enteredPassword.clear();
-                        }
-                        else {
-                            MessageBoxW(hWnd, L"Password entry cancelled or empty.", L"Error", MB_OK | MB_ICONERROR);
-                        }
-                    }
-                    else {
-                        DWORD err = GetLastError();
-                        swprintf_s(debugMsg, L"Copy failed. Error code: %d", err);
-                        MessageBoxW(hWnd, debugMsg, L"Copy Error", MB_OK | MB_ICONERROR);
-                    }
-                }
-                else {
-                    MessageBoxW(hWnd, L"Backup file not found.", L"Error", MB_OK | MB_ICONERROR);
-                }
-            }
+            // Show file open dialog
+             GetOpenFileNameW(&ofn) ;           
+             
+             ListView_DeleteAllItems(hListView);
+            cEXIST(hWnd);
+            PopulateListView();
+      
             break;
         }
-
+  ////////////////////////////////////////////////////////////     
 
         case IDC_TOGGLE_THEME:
         {
@@ -1548,7 +1581,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
                 if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
                     entries[idx].color = currentColor; // Update the color for the selected entry
-                    SaveXML(); // Save to persist the color change
+                    
                     UpdateListViewColors(); // Refresh ListView to show new color
                     InvalidateRect(hListView, nullptr, TRUE); // Force ListView redraw
                 }
@@ -1760,6 +1793,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_DESTROY:
     {
+
+        SaveXML();
         if (g_clipboardTimer) KillTimer(hWnd, g_clipboardTimer);
         KillTimer(hWnd, ONE);
         KillTimer(hWnd, AUTO_LOCK_TIMER);
@@ -1823,14 +1858,31 @@ std::wstring Utf8ToWstring(const char* utf8) {
     return std::wstring(buffer.data());
 }
 
+// Converts a std::wstring to a UTF-8 encoded std::string
+std::string StringToUTF8(const std::wstring& wideString) {
+    if (wideString.empty()) return std::string();
+
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wideString.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size_needed == 0) return std::string();
+
+    std::string result(size_needed - 1, 0); // Exclude null terminator
+    WideCharToMultiByte(CP_UTF8, 0, wideString.c_str(), -1, result.data(), size_needed, nullptr, nullptr);
+
+    return result;
+}
+
  
 tinyxml2::XMLDocument tiny;
  
  
 
 bool LoadXML(std::wstring xmlPath) {
-
     WCHAR debugMsg[512];
+
+    // Check if resto == 1 and xmlPath is data.xml, then reset resto to 0
+    if (resto == 1 && xmlPath == GetFullFilePath(L"data.xml")) {
+        resto = 0;
+    }
 
     tiny.Clear();
 
@@ -1905,6 +1957,8 @@ bool LoadXML(std::wstring xmlPath) {
         else {
             entry.color = RGB(255, 255, 255); // Default color if none specified
         }
+        const char* creationDate = entryElement->Attribute("creationDate");
+        entry.creationDate = creationDate ? Utf8ToWstring(creationDate) : L"";
         entries.push_back(entry);
     }
 
@@ -1922,16 +1976,28 @@ bool LoadXML(std::wstring xmlPath) {
 }
  
 
- 
-
-
-
-
-
 void SaveXML() {
+    if (resto == 1) {
+        return; // Skip saving during backup restoration
+    }
+
     std::wstring xmlPath = GetFullFilePath(L"data.xml");
     std::wstring tempPath = GetFullFilePath(L"temp_plain.xml");
-    std::wstring backupPath = GetFullFilePath(L"DataBackup.xml");
+
+    // Generate backup filename with current date (e.g., Backup-6-11-25.xml)
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    WCHAR backupFileName[32];
+    swprintf_s(backupFileName, L"Backup-%d-%d-%d.xml", st.wMonth, st.wDay, st.wYear % 100);
+    std::wstring backupPath = GetFullFilePath(backupFileName);
+
+    // Create a backup only if it doesn't already exist
+    if (PathFileExistsW(xmlPath.c_str()) && !PathFileExistsW(backupPath.c_str())) {
+        if (!CopyFileW(xmlPath.c_str(), backupPath.c_str(), FALSE)) {
+            // Non-critical error, inform user but proceed with saving
+           // MessageBoxW(nullptr, L"Warning: Failed to create backup of existing data file. Proceeding with save.", L"Backup Warning", MB_OK | MB_ICONWARNING);
+        }
+    }
 
     tinyxml2::XMLDocument doc;
     tinyxml2::XMLDeclaration* decl = doc.NewDeclaration(); // XML declaration (e.g., <?xml version="1.0" encoding="UTF-8"?>)
@@ -1946,8 +2012,6 @@ void SaveXML() {
         // Helper lambda to create and append text elements
         auto createTextElement = [&](const char* elementName, const std::wstring& text) {
             tinyxml2::XMLElement* elem = doc.NewElement(elementName);
-            // WstringToUtf8 from CryptoUtils.cpp handles empty wstr by returning empty std::string.
-            // tinyxml2 SetText correctly handles empty strings.
             elem->SetText(WstringToUtf8(text).c_str());
             entryElement->InsertEndChild(elem);
             };
@@ -1959,12 +2023,15 @@ void SaveXML() {
         createTextElement("Password", entry.password);
         createTextElement("Note", entry.note);
         createTextElement("Category", entry.category);
+        createTextElement("creationDate", entry.creationDate);
 
         tinyxml2::XMLElement* colorElement = doc.NewElement("Color");
         colorElement->SetAttribute("R", GetRValue(entry.color));
         colorElement->SetAttribute("G", GetGValue(entry.color));
         colorElement->SetAttribute("B", GetBValue(entry.color));
         entryElement->InsertEndChild(colorElement);
+
+        entryElement->SetAttribute("creationDate", StringToUTF8(entry.creationDate).c_str());
 
         root->InsertEndChild(entryElement);
     }
@@ -1973,36 +2040,25 @@ void SaveXML() {
     std::string tempPathUtf8 = WstringToUtf8(tempPath);
     if (doc.SaveFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
         MessageBoxW(nullptr, L"Failed to save temporary XML data. Data not saved.", L"Save Error", MB_OK | MB_ICONERROR);
-        // Attempt to delete the potentially corrupted/incomplete temp file
         DeleteFileW(tempPath.c_str());
         return;
     }
 
-    // Create a backup of the current encrypted data.xml before overwriting
-    if (PathFileExistsW(xmlPath.c_str())) {
-        if (!CopyFileW(xmlPath.c_str(), backupPath.c_str(), FALSE)) {
-            // Non-critical error, perhaps just log or inform user without stopping the save
-            MessageBoxW(nullptr, L"Warning: Failed to create backup of existing data file. Proceeding with save.", L"Backup Warning", MB_OK | MB_ICONWARNING);
-        }
-    }
-
     // Encrypt temp file to the final data.xml
-    if (!g_userKeyForXml.empty()) { // Ensure key is available
+    if (!g_userKeyForXml.empty()) {
         if (!EncryptFile(tempPath, xmlPath, std::wstring(g_userKeyForXml.begin(), g_userKeyForXml.end()))) {
             MessageBoxW(nullptr, L"Failed to encrypt XML data. Data not saved.", L"Encryption Error", MB_OK | MB_ICONERROR);
-            // Clean up temp plain file if encryption fails
             DeleteFileW(tempPath.c_str());
             return;
         }
     }
     else {
         MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
-        // Clean up temp plain file if key is not available
         DeleteFileW(tempPath.c_str());
         return;
     }
 
-    // Clean up temp plain file only if everything was successful
+    // Clean up temp plain file
     DeleteFileW(tempPath.c_str());
 }
 
@@ -2263,12 +2319,30 @@ int cEXIST(HWND hWnd)
                         SecureZeroMemory(&g_enteredPassword[0], g_enteredPassword.size() * sizeof(wchar_t));
                         g_enteredPassword.clear();
                         // Load XML with the original password
+                        /*
                         if (!LoadXML(GetFullFilePath(L"data.xml")))
                         {
                             MessageBoxW(hWnd, L"Failed to initialize data file.", L"Error", MB_OK | MB_ICONERROR);
                             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                             return 0;
                         }
+                        */
+
+                        if (resto == 0) {
+                            if (!LoadXML(GetFullFilePath(L"data.xml"))) {
+                                MessageBoxW(hWnd, L"Failed to initialize data file.", L"Error", MB_OK | MB_ICONERROR);
+                                SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                return 0;
+                            }
+                        }
+                        else {
+                            if (!LoadXML(GetFullFilePath(files.c_str())))  {
+                                MessageBoxW(hWnd, L"Failed to load specified file.", L"Error", MB_OK | MB_ICONERROR);
+                                SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                return 0;
+                            }
+                        }
+
                         SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                         tempPassword.clear();
                         return 1;
@@ -2414,4 +2488,69 @@ bool DisableStartup() {
         return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
     }
     return false;
+}
+
+
+
+void SetWindowTextColor(HWND hWnd, COLORREF color) {
+    HDC hdc = GetDC(hWnd); // Get the device context for the window
+    if (hdc) {
+        SetTextColor(hdc, color); // Set the text color
+        ReleaseDC(hWnd, hdc); // Release the device context
+    }
+}
+
+
+
+INT_PTR CALLBACK AboutNewDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    static HBITMAP hBitmap = nullptr;
+
+    switch (message)
+    {
+    case WM_INITDIALOG:
+    {
+        // Prevent screenshots
+        //SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
+
+
+
+
+
+        return (INT_PTR)TRUE;
+    }
+
+
+
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdcStatic = (HDC)wParam;
+        extern bool isDarkTheme;
+        extern HBRUSH hDarkGreyBrush;
+
+        SetTextColor(hdcStatic, textColor);
+        SetBkMode(hdcStatic, TRANSPARENT);
+        return (INT_PTR)hDarkGreyBrush;
+
+        break;
+    }
+
+    case WM_COMMAND:
+    {
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+        {
+            EndDialog(hDlg, LOWORD(wParam));
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+
+    case WM_DESTROY:
+    {
+
+
+    }
+    return (INT_PTR)FALSE;
+    }
 }
