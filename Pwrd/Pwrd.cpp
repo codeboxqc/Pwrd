@@ -1,9 +1,9 @@
 ﻿#define WIN32_LEAN_AND_MEAN
 
 // Add to your project settings or code
-#ifndef NTDDI_VERSION
+//#ifndef NTDDI_VERSION
 #define NTDDI_VERSION NTDDI_WIN10
-#endif
+//#endif
 
 #define _WIN32_WINNT _WIN32_WINNT_WIN10
 
@@ -79,7 +79,7 @@ HBRUSH hDarkGreyBrush = nullptr;
 HBRUSH butBrush = nullptr;
 
 ////////////////////
- std::vector<PasswordEntry> entries;
+std::vector<PasswordEntry> entries;
 
 //struct WindowData {
 //    std::vector<PasswordEntry> entries;
@@ -138,8 +138,8 @@ const wchar_t* animationSets[] = {
     L"12321\0",      // Number countdown
     L"oO0Oo\0",      // Circle pulse
     L"/-\\|\0",  // Classic spinner
-  
-   
+
+
 };
 
 const wchar_t* animationChars;
@@ -193,7 +193,7 @@ sfc /scannow
 //bool SaveXML(const std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
 
 void PopulateListView();
- 
+
 void UpdateListViewColors();
 void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
 int cEXIST(HWND hWnd);
@@ -217,7 +217,7 @@ void StopClipboardClearTimer(HWND hWnd) {
 void ResetAutoLockTimer(HWND hWnd) {
     if (g_lockTimer) KillTimer(hWnd, AUTO_LOCK_TIMER);
     g_lockTimer = SetTimer(hWnd, AUTO_LOCK_TIMER, 5 * 60 * 1000, NULL); // 5 minutes
-    
+
 }
 
 
@@ -239,7 +239,7 @@ std::wstring GetFullFilePath(const wchar_t* filename) {
     return std::wstring(fullPath);
 }
 
- 
+
 
 void ClearSensitiveDataAndUI(HWND hWnd, bool preserveListView = false) {
     if (!g_userKeyForXml.empty()) {
@@ -289,8 +289,8 @@ void GenerateAndSetPassword(HWND hEdit, int length) {
 
     const size_t charsetSize = wcslen(charset);
 
-     
-    
+
+
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -504,36 +504,36 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
 
-  ////////////////////////////////////////////
-    //Prevent DLL Injection
+    ////////////////////////////////////////////
+      //Prevent DLL Injection
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
 
 
     //Check for Debuggers
     if (IsDebuggerPresent()) {
-       // MessageBoxW(nullptr, L"Debugger detected. Exiting.", L"Security Alert", MB_OK | MB_ICONERROR);
+        // MessageBoxW(nullptr, L"Debugger detected. Exiting.", L"Security Alert", MB_OK | MB_ICONERROR);
         return FALSE;
     }
 
 
 
-    if(IsVMCPU()==true) return FALSE;
+      // if(IsVMCPU()==true) return FALSE;
 
-    if (IsDebuggerAttached() == true) return FALSE;
+      // if (IsDebuggerAttached() == true) return FALSE;
 
-    if (IsRunningInVM() == true) return FALSE;
+     //   if (IsRunningInVM() == true) return FALSE;
 
-    if (IsBeingDebugged() == true) return FALSE;  
+      //  if (IsBeingDebugged() == true) return FALSE;  
 
-    if (OutputDebugStringCheck() == true) return FALSE;
+     //  if (OutputDebugStringCheck() == true) return FALSE;
 
-    if (NtQueryDebugFlag() == true) return FALSE;
+      // if (NtQueryDebugFlag() == true) return FALSE;
 
-    if (CheckForBreakpointsInCode() == true) return FALSE;
-           
-    
-/////////////////////////////////////////////////////
-    // Create a named mutex to check for existing instance
+       
+
+
+   /////////////////////////////////////////////////////
+       // Create a named mutex to check for existing instance
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Pwrd");
     if (hMutex == nullptr || GetLastError() == ERROR_ALREADY_EXISTS) {
         // Another instance is already running
@@ -547,7 +547,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     GetModuleFileNameW(NULL, exePath, MAX_PATH);
     PathRemoveFileSpecW(exePath);
- 
+
     //tooltips
 
     INITCOMMONCONTROLSEX icex;
@@ -623,18 +623,18 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     ////////////////////////////////
     ShowWindow(hWnd, SW_HIDE);
 
-   
-        mini = cEXIST(hWnd);
-        if (mini == 0) {
-            KillTrayIcon();
-            ShowWindow(hWnd, SW_HIDE);
-            PostQuitMessage(0);
-            return FALSE;
 
-        }
- 
+    mini = cEXIST(hWnd);
+    if (mini == 0) {
+        KillTrayIcon();
+        ShowWindow(hWnd, SW_HIDE);
+        PostQuitMessage(0);
+        return FALSE;
+
+    }
+
     //////////////////////////////
-  
+
 
     if (!hWnd)
     {
@@ -655,7 +655,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     return TRUE;
 }
 
- 
+
 
 
 void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
@@ -767,18 +767,18 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
 void ini(HWND hWnd)
 {
 
- 
+
     animationChars = getRandomAnimationSet();
 
 
     hListView = CreateWindowEx(0, WC_LISTVIEW, L"",
-       // WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER, // Added LVS_NOCOLUMNHEADER
+        // WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER, // Added LVS_NOCOLUMNHEADER
         WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
         10, 10, 200, 580, hWnd, (HMENU)IDC_LISTVIEW, hInst, nullptr);
 
-    
-        
-  
+
+
+
 
     LVCOLUMNW lvc = { 0 };
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -829,20 +829,20 @@ void ini(HWND hWnd)
     CreateWindow(L"STATIC", L"Password", WS_CHILD | WS_VISIBLE,
         220, 210, 80, 20, hWnd, nullptr, hInst, nullptr);
 
-     AutoBtn = CreateWindow(L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        230, 232, 36, 20, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
-     AutoBtn2 = CreateWindow(L"BUTTON", L"Mili", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-         237, 232, 46, 20, hWnd, (HMENU)IDC_AutoBtn2, hInst, nullptr);
-      
-   
-   // hTogglePasswordBtn = CreateWindow(L"BUTTON", L"Show", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-   //     570, 212, 70, 28, hWnd, (HMENU)IDC_TOGGLE_PASSWORD, hInst, nullptr);
+    AutoBtn = CreateWindow(L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        216, 232, 30, 20, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
+    AutoBtn2 = CreateWindow(L"BUTTON", L"Mili", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        249, 232, 30, 20, hWnd, (HMENU)IDC_AutoBtn2, hInst, nullptr);
 
-   // hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
-   //    310, 210, 250, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
 
-    hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL  ,
-        310, 210, 250, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
+    // hTogglePasswordBtn = CreateWindow(L"BUTTON", L"Show", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+    //     570, 212, 70, 28, hWnd, (HMENU)IDC_TOGGLE_PASSWORD, hInst, nullptr);
+
+    // hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
+    //    310, 210, 250, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
+
+    hPassword = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        310, 210, 300, 28, hWnd, (HMENU)IDC_PASSWORD, hInst, nullptr);
 
 
     hCopyPasswordBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
@@ -861,6 +861,7 @@ void ini(HWND hWnd)
     SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Work");
     SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Web");
     SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Email");
+    SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Note");
     SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Crap");
     SendMessage(hCategory, CB_ADDSTRING, 0, (LPARAM)L"Other");
     SetWindowTextW(hCategory, L"Web");
@@ -888,8 +889,8 @@ void ini(HWND hWnd)
     hSearchEdit = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
         220, 500, 240, 20, hWnd, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
 
-   // hSortCombo = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-      // 220, 530, 120, 100, hWnd, (HMENU)IDC_SORT_COMBO, hInst, nullptr);
+    // hSortCombo = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+       // 220, 530, 120, 100, hWnd, (HMENU)IDC_SORT_COMBO, hInst, nullptr);
 
     hSortCombo = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL,
         220, 530, 120, 100, hWnd, (HMENU)IDC_SORT_COMBO, hInst, nullptr);
@@ -938,7 +939,7 @@ void ini(HWND hWnd)
     SendMessage(hBtnicon, BM_SETIMAGE, IMAGE_ICON, (LPARAM)tmphIcon);
 
     // Tooltip setup
-  
+
     hTooltip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASS, nullptr,
         WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON | TTS_NOPREFIX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -953,10 +954,10 @@ void ini(HWND hWnd)
 
         SendMessageW(hTooltip, TTM_SETMAXTIPWIDTH, 0, 300);
         SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, MAKELPARAM(500, 0));
-        SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_INITIAL, MAKELPARAM(5000*20, 0));
+        SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_INITIAL, MAKELPARAM(5000 * 20, 0));
         SendMessageW(hTooltip, TTM_SETDELAYTIME, TTDT_RESHOW, MAKELPARAM(100, 0));
 
-        
+
 
         AddTooltip(hTooltip, hWnd, hName, L"Enter the name of the entry");
         AddTooltip(hTooltip, hWnd, hWebsite, L"Enter the website URL");
@@ -986,7 +987,7 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hToggleStartupBtn, L"Toggle whether the application starts with Windows");
 
 
-        
+
         SendMessageW(hTooltip, TTM_ACTIVATE, TRUE, 0);
     }
 
@@ -1022,17 +1023,17 @@ void ini(HWND hWnd)
     g_dataModifiedInFields = false;
 
     SetTimer(hWnd, ONE, 333, nullptr);
-    
+
     //LoadXML(L"data.xml");
     PopulateListView();
     if (hFont) DeleteObject(hFont);
     if (hFont2) DeleteObject(hFont2);
 
- 
-    
+
+
 }
 
- 
+
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -1040,7 +1041,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     static bool isMinimizedState = false;
     static HWND hHeader = nullptr;
     size_t keySize = 32;
-   // BYTE* pKey = new BYTE[keySize];
+    // BYTE* pKey = new BYTE[keySize];
     BYTE* pKey = nullptr;
 
     // Allocate large variables on the heap instead of the stack
@@ -1054,28 +1055,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
         return TRUE;
 
-         
+
     case WM_CREATE:
     {
         InitCommonControls();
         HRESULT hr = CoInitialize(nullptr);
         if (FAILED(hr)) {
             MessageBoxW(nullptr, L"Failed to initialize COM library.", L"Error", MB_OK | MB_ICONERROR);
-           // return FALSE; // Exit or handle the error as needed
+            // return FALSE; // Exit or handle the error as needed
         }
 
-         hr = OleInitialize(nullptr);
+        hr = OleInitialize(nullptr);
         if (FAILED(hr)) {
             MessageBoxW(nullptr, L"Failed to initialize OLE. The application will now exit.", L"Error", MB_OK | MB_ICONERROR);
-           // return FALSE; // Exit the application if OLE initialization fails
+            // return FALSE; // Exit the application if OLE initialization fails
         }
 
         InitializeGDIPlus();
 
 
-        
-         
-       
+
+
+
 
         BYTE* pKey = new BYTE[keySize];
         SecureZeroMemory(pKey, 32);
@@ -1117,11 +1118,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         // ClearSensitiveDataAndUI(hWnd);
         // ShowWindow(hWnd, SW_HIDE);
         if (mini == 2) {
-        ShowTrayIcon(); // Ensure tray icon is visible
-        ShowWindow(hWnd, SW_HIDE);
-        updown = false; // Align with existing tray icon logic
+            ShowTrayIcon(); // Ensure tray icon is visible
+            ShowWindow(hWnd, SW_HIDE);
+            updown = false; // Align with existing tray icon logic
         }
-      
+
 
         return 0;
     }
@@ -1148,7 +1149,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (hMenu)
             {
                 if (!updown)
-                   AppendMenu(hMenu, MF_STRING, IDM_SHOW, L"Restore");
+                    AppendMenu(hMenu, MF_STRING, IDM_SHOW, L"Restore");
                 AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenu(hMenu, MF_STRING, IDM_EXIT, L"Exit"); // Use defined IDs
                 int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
@@ -1168,9 +1169,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     break;
                 }
                 case IDM_EXIT:
-                    SecureZeroMemory(pKey, keySize);
-                    VirtualUnlock(pKey, keySize);
-                    delete[] pKey;
+                    
                     SaveXML(); // Save to persist the color change
                     KillTrayIcon(); // Ensure tray icon is removed
                     DestroyWindow(hWnd);
@@ -1185,7 +1184,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_SHOWWINDOW:
     {
-        if (hTooltip) ShowWindow(hTooltip,   SW_SHOW  );
+        if (hTooltip) ShowWindow(hTooltip, SW_SHOW);
 
         hHeader = ListView_GetHeader(hListView);
         if (hHeader)
@@ -1240,7 +1239,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_ADD: buttonText = L"Add"; break;
             case IDC_COLOR: buttonText = L"Pick Color"; break;
             case IDC_SEARCH: buttonText = L"Search"; break;
-            //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
+                //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
             case IDC_RESTORE_BACKUP: buttonText = L"Restore"; break;
             case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
             case IDC_TOGGLE_STARTUP: buttonText = g_isStartupEnabled ? L"Run at Startup: ON" : L"Run at Startup: OFF"; break;
@@ -1272,7 +1271,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CTLCOLORLISTBOX:
     case WM_CTLCOLORSCROLLBAR:
     case WM_CTLCOLOREDIT:
-    
+
     {
         HDC hdc = (HDC)wParam;
         SetBkMode(hdc, TRANSPARENT);
@@ -1457,7 +1456,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             CloseClipboard();
             KillTimer(hWnd, CLIPBOARD_CLEAR_TIMER_ID);
         }
-       
+
 
         if (wParam == ONE) {
             animationIndex = (animationIndex + 1) % Tlength;
@@ -1539,8 +1538,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             //MessageBoxW(hWnd, L"hell-o", L"Debug", MB_OK | MB_ICONINFORMATION);
             //DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUT_NEW), hWnd, AboutNewDlgProc);
             ShellExecuteW(hWnd, L"open", L"https://www.nutz.club", NULL, NULL, SW_SHOWNORMAL);
-            
-              
+
+
             break;
 
         case IDC_NAME:
@@ -1559,8 +1558,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
             }
             break;
-         
-      
+
+
 
 
         case IDC_TOGGLE_STARTUP:
@@ -1615,11 +1614,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case IDC_MidBtn:
 
-             
+
             ShowTrayIcon();
             updown = false;
             ShowWindow(hWnd, SW_HIDE);
-        
+
             break;
         case IDC_LowBtn:
             SendMessage(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
@@ -1628,18 +1627,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_AutoBtn2:
             if (mili == 0) mili = 1;
             else mili = 0;
-            break;
+            //break;
 
         case IDC_AutoBtn:
-           //GnerateAndSetPassword(hPassword, 16);
+            //GnerateAndSetPassword(hPassword, 16);
 
-            if(mili==1) GenerateSecurePassword(hPassword, 32, true, true);
+            if (mili == 1) GenerateSecurePassword(hPassword, 32, true, true);
             else GenerateSecurePassword(hPassword, 16, true, false);
 
             g_dataModifiedInFields = true;
             UpdatePasswordStrength(hWnd, hPassword);
             break;
-            
+
             /*
         case IDC_TOGGLE_PASSWORD:
         {
@@ -1833,18 +1832,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
 
 
-       
 
-     
-             
-          
 
-/////////////////////////
+
+
+
+
+        /////////////////////////
         case IDC_RESTORE_BACKUP:
         {
             // Confirm restore action
             if (MessageBoxW(hWnd, L"Load save file temps!", L"Confirm Restore", MB_YESNO | MB_ICONQUESTION) != IDYES)  break;
-             
+
 
             resto = 1;
 
@@ -1860,21 +1859,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             ofn.lpstrDefExt = L"xml";
 
             // Show file open dialog
-             GetOpenFileNameW(&ofn) ;           
-             
-             ListView_DeleteAllItems(hListView);
+            GetOpenFileNameW(&ofn);
+
+            ListView_DeleteAllItems(hListView);
             cEXIST(hWnd);
             PopulateListView();
-      
+
             break;
         }
-  ////////////////////////////////////////////////////////////     
+        ////////////////////////////////////////////////////////////     
 
         case IDC_TOGGLE_THEME:
         {
             isDarkTheme = !isDarkTheme;
             dark = isDarkTheme ? RGB(33, 33, 33) : RGB(22, 22, 22);
-            textColor = isDarkTheme ? RGB(255, 255, 255) : RGB(222, 222,8 ); 
+            textColor = isDarkTheme ? RGB(255, 255, 255) : RGB(222, 222, 8);
             DeleteObject(hDarkGreyBrush);
             hDarkGreyBrush = CreateSolidBrush(dark);
             ListView_SetBkColor(hListView, dark);
@@ -1894,7 +1893,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
                 if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
                     entries[idx].color = currentColor; // Update the color for the selected entry
-                    
+
                     UpdateListViewColors(); // Refresh ListView to show new color
                     InvalidateRect(hListView, nullptr, TRUE); // Force ListView redraw
                 }
@@ -2057,9 +2056,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         PasswordEntry entry;
         WCHAR buffer[1024];
         GetWindowTextW(hName, buffer, 1024);
+
         SecureZeroMemory(pKey, keySize);
         VirtualUnlock(pKey, keySize);
         delete[] pKey;
+
         entry.name = buffer;
         if (!entry.name.empty()) {
             GetWindowTextW(hWebsite, buffer, 1024);
@@ -2126,7 +2127,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(butBrush);
         if (hToggleStartupBtn) DestroyWindow(hToggleStartupBtn);
 
-       
+
         if (hBigFont) DeleteObject(hBigFont);
 
         if (hTooltip)
@@ -2187,10 +2188,10 @@ std::string StringToUTF8(const std::wstring& wideString) {
     return result;
 }
 
- 
+
 tinyxml2::XMLDocument tiny;
- 
- 
+
+
 
 bool LoadXML(std::wstring xmlPath) {
     WCHAR debugMsg[512];
@@ -2290,7 +2291,7 @@ bool LoadXML(std::wstring xmlPath) {
     DeleteFileW(tempPath.c_str());
     return true;
 }
- 
+
 
 void SaveXML() {
     if (resto == 1) {
@@ -2369,7 +2370,7 @@ void SaveXML() {
         }
     }
     else {
-       // MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
+        // MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
         DeleteFileW(tempPath.c_str());
         return;
     }
@@ -2423,14 +2424,14 @@ void CopyToClipboard(HWND hWnd, const std::wstring& text) {
 }
 
 
- 
+
 
 void UpdateListViewColors() {
     InvalidateRect(hListView, nullptr, TRUE);
     UpdateWindow(hListView);
 }
 
- 
+
 
 void PopulateListView() {
     ListView_DeleteAllItems(hListView);
@@ -2444,7 +2445,7 @@ void PopulateListView() {
     }
 }
 
- 
+
 
 
 
@@ -2580,7 +2581,7 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
 
 
 
- 
+
 
 
 
@@ -2601,9 +2602,9 @@ int cEXIST(HWND hWnd)
 
         if (result == IDCANCEL)
         {
-            
-           
-            
+
+
+
             return 2;
         }
         else if (result == IDOK)
@@ -2656,7 +2657,7 @@ int cEXIST(HWND hWnd)
                             }
                         }
                         else {
-                            if (!LoadXML(GetFullFilePath(files.c_str())))  {
+                            if (!LoadXML(GetFullFilePath(files.c_str()))) {
                                 MessageBoxW(hWnd, L"Failed to load specified file.", L"Error", MB_OK | MB_ICONERROR);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                                 return 0;
@@ -2714,8 +2715,8 @@ int cEXIST(HWND hWnd)
                             {
                                 MessageBoxW(hWnd, L"Failed to load XML file.", L"Error", MB_OK | MB_ICONERROR);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
-                                 return 1;////////////////////
-                                 ///////////////
+                                return 1;////////////////////
+                                ///////////////
                             }
                             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                             tempPassword.clear();
@@ -2757,7 +2758,7 @@ int cEXIST(HWND hWnd)
         {
             MessageBoxW(hWnd, L"Unexpected dialog result. Please try again.", L"Error", MB_OK | MB_ICONERROR);
             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
-           
+
             continue;
         }
     }
@@ -2943,7 +2944,7 @@ typedef NTSTATUS(NTAPI* pNtQueryInformationProcess)(
     PULONG ReturnLength
     );
 
- 
+
 
 
 bool NtQueryDebugFlag() {
