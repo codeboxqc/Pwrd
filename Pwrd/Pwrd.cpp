@@ -1,7 +1,10 @@
 ﻿#define WIN32_LEAN_AND_MEAN
 
 // Add to your project settings or code
-#define NTDDI_VERSION NTDDI_WIN10   //tooltips?
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION NTDDI_WIN10
+#endif
+
 #define _WIN32_WINNT _WIN32_WINNT_WIN10
 
 #include "pch.h"
@@ -27,13 +30,19 @@
 
 #include <bcrypt.h> 
 #include "tinyxml2.h"
-#include "CryptoUtils.h"
+#include <tlhelp32.h> // Include this header for TH32CS_SNAPPROCESS and CreateToolhelp32Snapshot
+
+#pragma comment(lib, "Kernel32.lib") // Link against Kernel32.lib
 
 #pragma comment(lib, "comctl32.lib") 
 #pragma comment(lib, "User32.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shlwapi.lib")
+
+#include <winternl.h>
+#pragma comment(lib, "ntdll.lib")
+
 
 #define MAX_LOADSTRING 100
 #define ONE 1
@@ -58,6 +67,7 @@ HWND hAddBtn = nullptr, hDeleteBtn = nullptr, hSearchBtn = nullptr, hColorBtn = 
 HWND hUpdateBtn = nullptr;
 HWND hCopyNameBtn = nullptr, hCopyWebsiteBtn = nullptr, hCopyEmailBtn = nullptr, hCopyUserBtn = nullptr, hCopyPasswordBtn = nullptr, hCopyNoteBtn = nullptr;
 HWND AutoBtn = nullptr, XBtn = nullptr, MidBtn = nullptr, LowBtn = nullptr, hBtnicon = nullptr, resetBtn = nullptr;
+HWND AutoBtn2 = nullptr;
 HWND hStrengthLabel = nullptr, hTogglePasswordBtn = nullptr, hSortCombo = nullptr, hCategory = nullptr, hRestoreBackupBtn = nullptr, hToggleThemeBtn = nullptr;
 COLORREF currentColor = RGB(222, 222, 8);
 COLORREF dark = RGB(33, 33, 33);
@@ -67,7 +77,16 @@ static CHOOSECOLOR cc = { 0 };
 static COLORREF customColors[16] = { 0 };
 HBRUSH hDarkGreyBrush = nullptr;
 HBRUSH butBrush = nullptr;
-std::vector<PasswordEntry> entries;
+
+////////////////////
+ std::vector<PasswordEntry> entries;
+
+//struct WindowData {
+//    std::vector<PasswordEntry> entries;
+ //   int lastSelectedIndex = -1;
+///////////////////////////
+
+
 static int g_lastSelectedEntryIndex = -1;
 static bool g_dataModifiedInFields = false;
 static bool g_isInsideApplyChanges = false;
@@ -136,11 +155,29 @@ BOOL InitInstance(HINSTANCE, int);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK PasswordDlgProc(HWND, UINT, WPARAM, LPARAM);
- 
+
+
+bool IsVMCPU();
+bool IsDebuggerAttached();
+bool IsRunningInVM();
+bool IsBeingDebugged();
+bool OutputDebugStringCheck();
+bool NtQueryDebugFlag();
+bool CheckForBreakpointsInCode();
+
+bool mili = 0;
+
 void CopyToClipboard(HWND hWnd, const std::wstring& text);
+void GenerateSecurePassword(HWND hEdit,
+    size_t length = 16,
+    bool skipAmbiguous = true,
+    bool militaryGrade = false);
+
 
 INT_PTR CALLBACK AboutNewDlgProc(HWND, UINT, WPARAM, LPARAM);
 
+#define CLIPBOARD_CLEAR_TIMER_ID 901
+#define CLIPBOARD_CLEAR_DELAY_MS 30000 // 30 seconds
 
 bool LoadXML(std::wstring xmlPath);
 void SaveXML();
@@ -162,6 +199,18 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit);
 int cEXIST(HWND hWnd);
 
 INT_PTR CALLBACK PasswordDialogProcNew(HWND, UINT, WPARAM, LPARAM); // Added
+
+
+
+void StartClipboardClearTimer(HWND hWnd) {
+    SetTimer(hWnd, CLIPBOARD_CLEAR_TIMER_ID, CLIPBOARD_CLEAR_DELAY_MS, nullptr);
+}
+
+void StopClipboardClearTimer(HWND hWnd) {
+    KillTimer(hWnd, CLIPBOARD_CLEAR_TIMER_ID);
+}
+
+
 
 
 //  function to reset the autolock timer
@@ -228,6 +277,8 @@ void Transparent(HWND hWnd, int alpha) {
     SetLayeredWindowAttributes(hWnd, RGB(0, 0, 0), (BYTE)alpha, LWA_ALPHA);
 }
 
+
+/*
 void GenerateAndSetPassword(HWND hEdit, int length) {
     if (length < 8) length = 8;
     const wchar_t charset[] =
@@ -235,7 +286,12 @@ void GenerateAndSetPassword(HWND hEdit, int length) {
         L"abcdefghijklmnopqrstuvwxyz"
         L"0123456789"
         L"!@#$%^&*()-_=+[]{}<>?/|";
+
     const size_t charsetSize = wcslen(charset);
+
+     
+    
+
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<size_t> dist(0, charsetSize - 1);
@@ -247,7 +303,172 @@ void GenerateAndSetPassword(HWND hEdit, int length) {
     SetWindowTextW(hEdit, password.c_str());
     UpdatePasswordStrength(hEdit, hEdit);
 }
+*/
 
+
+/*
+void GenerateSecurePassword(HWND hEdit,
+    size_t length = 16,
+    bool  skipAmbiguous = true)
+{
+    // ---------- character pools ----------
+    const std::wstring UPPER = L"ABCDEFGHJKLMNPQRSTUVWXYZ";           // no I or O
+    const std::wstring LOWER = L"abcdefghijkmnopqrstuvwxyz";          // no l
+    const std::wstring DIGIT = L"23456789";                           // no 0 or 1
+    const std::wstring SYM = L"!@#$%^&*()-_=+[]{}<>?/|";
+
+    std::wstring allPool = UPPER + LOWER + DIGIT + SYM;
+    if (!skipAmbiguous) {
+        allPool += L"IOl01|"; // add back the ambiguities if caller wants
+    }
+
+    auto rndByte = [](BYTE* buf, DWORD len) {
+        BCryptGenRandom(nullptr, buf, len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        };
+
+    // ---------- guarantee one from each set ----------
+    std::wstring pwd;
+    BYTE b;
+    rndByte(&b, 1);     pwd += UPPER[b % UPPER.size()];
+    rndByte(&b, 1);     pwd += LOWER[b % LOWER.size()];
+    rndByte(&b, 1);     pwd += DIGIT[b % DIGIT.size()];
+    rndByte(&b, 1);     pwd += SYM[b % SYM.size()];
+
+    // ---------- fill the rest ----------
+    while (pwd.size() < length) {
+        rndByte(&b, 1);
+        pwd += allPool[b % allPool.size()];
+    }
+
+    // ---------- Fisher‑Yates shuffle ----------
+    for (size_t i = pwd.size() - 1; i > 0; --i) {
+        rndByte(&b, 1);
+        size_t j = b % (i + 1);
+        std::swap(pwd[i], pwd[j]);
+    }
+
+    SetWindowTextW(hEdit, pwd.c_str());
+    UpdatePasswordStrength(hEdit, hEdit);
+}
+*/
+
+// Optional: Military grade password with predefined settings
+void GenerateMilitaryGradePassword(HWND hEdit, size_t length = 32) {
+    GenerateSecurePassword(hEdit, length, true, true);
+}
+
+// Optional: Get password entropy estimate
+double CalculatePasswordEntropy(size_t length, size_t characterSetSize) {
+    return length * (std::log2(static_cast<double>(characterSetSize)));
+}
+
+
+void GenerateSecurePassword(HWND hEdit,
+    size_t length,
+    bool skipAmbiguous,
+    bool militaryGrade)
+{
+    // ---------- Enhanced character pools ----------
+    const std::wstring UPPER = L"ABCDEFGHJKLMNPQRSTUVWXYZ";           // no I or O
+    const std::wstring LOWER = L"abcdefghijkmnopqrstuvwxyz";          // no l
+    const std::wstring DIGIT = L"23456789";                           // no 0 or 1
+    const std::wstring SYM = L"!@#$%^&*()-_=+[]{}<>?/|\\~`;:\"'.,";   // Extended symbols
+
+    // Military grade additions
+    const std::wstring EXTENDED_SYM = L"§±¿¡€£¥©®™°µ¶";              // Unicode symbols
+    const std::wstring MATH_SYM = L"∑∏∆∇∈∉∪∩⊂⊃⊄⊅";               // Mathematical symbols
+
+    std::wstring allPool = UPPER + LOWER + DIGIT + SYM;
+
+    if (militaryGrade) {
+        allPool += EXTENDED_SYM + MATH_SYM;
+        length = std::max(length, size_t(24)); // Minimum 24 chars for military grade
+    }
+
+    if (!skipAmbiguous) {
+        allPool += L"IOl01|"; // add back the ambiguities if caller wants
+    }
+
+    // ---------- Enhanced random number generation ----------
+    auto rndBytes = [](BYTE* buf, DWORD len) {
+        NTSTATUS status = BCryptGenRandom(nullptr, buf, len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (!BCRYPT_SUCCESS(status)) {
+            throw std::runtime_error("Cryptographic random generation failed");
+        }
+        };
+
+    // Get entropy from multiple sources for military grade
+    auto getSecureRandom = [&](size_t max) -> size_t {
+        if (militaryGrade) {
+            // Use 4 bytes for better distribution with large character sets
+            DWORD entropy;
+            rndBytes(reinterpret_cast<BYTE*>(&entropy), sizeof(entropy));
+            return entropy % max;
+        }
+        else {
+            BYTE b;
+            rndBytes(&b, 1);
+            return b % max;
+        }
+        };
+
+    // ---------- Guarantee character distribution ----------
+    std::wstring pwd;
+
+    // Ensure at least one from each required category
+    pwd += UPPER[getSecureRandom(UPPER.size())];
+    pwd += LOWER[getSecureRandom(LOWER.size())];
+    pwd += DIGIT[getSecureRandom(DIGIT.size())];
+    pwd += SYM[getSecureRandom(SYM.size())];
+
+    if (militaryGrade) {
+        // Additional guaranteed characters for military grade
+        pwd += EXTENDED_SYM[getSecureRandom(EXTENDED_SYM.size())];
+        pwd += MATH_SYM[getSecureRandom(MATH_SYM.size())];
+
+        // Ensure multiple instances of each category for longer passwords
+        if (length >= 32) {
+            pwd += UPPER[getSecureRandom(UPPER.size())];
+            pwd += DIGIT[getSecureRandom(DIGIT.size())];
+        }
+    }
+
+    // ---------- Fill remaining characters ----------
+    while (pwd.size() < length) {
+        pwd += allPool[getSecureRandom(allPool.size())];
+    }
+
+    // ---------- Enhanced Fisher-Yates shuffle ----------
+    // Multiple passes for military grade
+    int shufflePasses = militaryGrade ? 3 : 1;
+
+    for (int pass = 0; pass < shufflePasses; ++pass) {
+        for (size_t i = pwd.size() - 1; i > 0; --i) {
+            size_t j = getSecureRandom(i + 1);
+            std::swap(pwd[i], pwd[j]);
+        }
+    }
+
+    // ---------- Additional entropy injection for military grade ----------
+    if (militaryGrade) {
+        // Randomly replace a few characters to break any potential patterns
+        size_t replacements = std::min(length / 8, size_t(4));
+        for (size_t r = 0; r < replacements; ++r) {
+            size_t pos = getSecureRandom(pwd.size());
+            pwd[pos] = allPool[getSecureRandom(allPool.size())];
+        }
+    }
+
+    // ---------- Security cleanup ----------
+    SetWindowTextW(hEdit, pwd.c_str());
+
+    // Clear password from memory (military grade practice)
+    if (militaryGrade) {
+        SecureZeroMemory(const_cast<wchar_t*>(pwd.data()), pwd.size() * sizeof(wchar_t));
+    }
+
+    UpdatePasswordStrength(hEdit, hEdit);
+}
 
 
 
@@ -282,6 +503,35 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
+
+  ////////////////////////////////////////////
+    //Prevent DLL Injection
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+
+    //Check for Debuggers
+    if (IsDebuggerPresent()) {
+       // MessageBoxW(nullptr, L"Debugger detected. Exiting.", L"Security Alert", MB_OK | MB_ICONERROR);
+        return FALSE;
+    }
+
+
+
+    if(IsVMCPU()==true) return FALSE;
+
+    if (IsDebuggerAttached() == true) return FALSE;
+
+    if (IsRunningInVM() == true) return FALSE;
+
+    if (IsBeingDebugged() == true) return FALSE;  
+
+    if (OutputDebugStringCheck() == true) return FALSE;
+
+    if (NtQueryDebugFlag() == true) return FALSE;
+
+    if (CheckForBreakpointsInCode() == true) return FALSE;
+           
+    
 /////////////////////////////////////////////////////
     // Create a named mutex to check for existing instance
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Pwrd");
@@ -578,8 +828,12 @@ void ini(HWND hWnd)
     // Password field (increased spacing: 50 from previous)
     CreateWindow(L"STATIC", L"Password", WS_CHILD | WS_VISIBLE,
         220, 210, 80, 20, hWnd, nullptr, hInst, nullptr);
+
      AutoBtn = CreateWindow(L"BUTTON", L"Auto", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        236, 232, 40, 20, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
+        230, 232, 36, 20, hWnd, (HMENU)IDC_AutoBtn, hInst, nullptr);
+     AutoBtn2 = CreateWindow(L"BUTTON", L"Mili", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+         237, 232, 46, 20, hWnd, (HMENU)IDC_AutoBtn2, hInst, nullptr);
+      
    
    // hTogglePasswordBtn = CreateWindow(L"BUTTON", L"Show", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
    //     570, 212, 70, 28, hWnd, (HMENU)IDC_TOGGLE_PASSWORD, hInst, nullptr);
@@ -724,6 +978,7 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hCopyPasswordBtn, L"Copy password to clipboard");
         AddTooltip(hTooltip, hWnd, hCopyNoteBtn, L"Copy note to clipboard");
         AddTooltip(hTooltip, hWnd, AutoBtn, L"Generate a random password");
+        AddTooltip(hTooltip, hWnd, AutoBtn2, L"Military Grade random password");
         AddTooltip(hTooltip, hWnd, hTogglePasswordBtn, L"Toggle password visibility");
         AddTooltip(hTooltip, hWnd, hSortCombo, L"Sort entries by name or category");
         AddTooltip(hTooltip, hWnd, hRestoreBackupBtn, L"Restore from backup file");
@@ -774,14 +1029,22 @@ void ini(HWND hWnd)
     if (hFont2) DeleteObject(hFont2);
 
  
-  
+    
 }
+
+ 
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     static HINSTANCE hInstance_WndProc = NULL;
     static bool isMinimizedState = false;
     static HWND hHeader = nullptr;
+    size_t keySize = 32;
+   // BYTE* pKey = new BYTE[keySize];
+    BYTE* pKey = nullptr;
+
+    // Allocate large variables on the heap instead of the stack
+   // std::unique_ptr<WCHAR[]> buffer(new WCHAR[2048]); // Example of moving a large array to
 
     switch (message)
     {
@@ -795,9 +1058,35 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CREATE:
     {
         InitCommonControls();
-        CoInitialize(NULL);
-        OleInitialize(NULL);
+        HRESULT hr = CoInitialize(nullptr);
+        if (FAILED(hr)) {
+            MessageBoxW(nullptr, L"Failed to initialize COM library.", L"Error", MB_OK | MB_ICONERROR);
+           // return FALSE; // Exit or handle the error as needed
+        }
+
+         hr = OleInitialize(nullptr);
+        if (FAILED(hr)) {
+            MessageBoxW(nullptr, L"Failed to initialize OLE. The application will now exit.", L"Error", MB_OK | MB_ICONERROR);
+           // return FALSE; // Exit the application if OLE initialization fails
+        }
+
         InitializeGDIPlus();
+
+
+        
+         
+       
+
+        BYTE* pKey = new BYTE[keySize];
+        SecureZeroMemory(pKey, 32);
+        VirtualLock(pKey, keySize); // Prevent swapping to disk
+
+        /***************************/
+        //auto* data = new WindowData();
+        //SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
+        /**************************/
+
+
         hInstance_WndProc = ((LPCREATESTRUCT)lParam)->hInstance;
         hDarkGreyBrush = CreateSolidBrush(dark);
         butBrush = CreateSolidBrush(RGB(66, 66, 66));
@@ -879,6 +1168,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     break;
                 }
                 case IDM_EXIT:
+                    SecureZeroMemory(pKey, keySize);
+                    VirtualUnlock(pKey, keySize);
+                    delete[] pKey;
                     SaveXML(); // Save to persist the color change
                     KillTrayIcon(); // Ensure tray icon is removed
                     DestroyWindow(hWnd);
@@ -913,6 +1205,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_MidBtn:
         case IDC_LowBtn:
         case IDC_AutoBtn:
+        case IDC_AutoBtn2:
         case IDC_DELETE:
         case IDC_ADD:
         case IDC_COLOR:
@@ -942,6 +1235,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_MidBtn: buttonText = L"O"; break;
             case IDC_LowBtn: buttonText = L"-"; break;
             case IDC_AutoBtn: buttonText = L"Auto"; break;
+            case IDC_AutoBtn2: buttonText = L"MILI"; break;
             case IDC_DELETE: buttonText = L"<-Delete"; break;
             case IDC_ADD: buttonText = L"Add"; break;
             case IDC_COLOR: buttonText = L"Pick Color"; break;
@@ -1156,6 +1450,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             updown = false;
             g_lockTimer = 0;
         }
+
+        if (wParam == CLIPBOARD_CLEAR_TIMER_ID) {
+            OpenClipboard(hWnd);
+            EmptyClipboard();
+            CloseClipboard();
+            KillTimer(hWnd, CLIPBOARD_CLEAR_TIMER_ID);
+        }
        
 
         if (wParam == ONE) {
@@ -1236,7 +1537,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         case 333:
             //MessageBoxW(hWnd, L"hell-o", L"Debug", MB_OK | MB_ICONINFORMATION);
-            DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUT_NEW), hWnd, AboutNewDlgProc);
+            //DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUT_NEW), hWnd, AboutNewDlgProc);
+            ShellExecuteW(hWnd, L"open", L"https://www.nutz.club", NULL, NULL, SW_SHOWNORMAL);
+            
               
             break;
 
@@ -1321,8 +1624,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_LowBtn:
             SendMessage(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             break;
+
+        case IDC_AutoBtn2:
+            if (mili == 0) mili = 1;
+            else mili = 0;
+            break;
+
         case IDC_AutoBtn:
-            GenerateAndSetPassword(hPassword, 16);
+           //GnerateAndSetPassword(hPassword, 16);
+
+            if(mili==1) GenerateSecurePassword(hPassword, 32, true, true);
+            else GenerateSecurePassword(hPassword, 16, true, false);
+
             g_dataModifiedInFields = true;
             UpdatePasswordStrength(hWnd, hPassword);
             break;
@@ -1744,6 +2057,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         PasswordEntry entry;
         WCHAR buffer[1024];
         GetWindowTextW(hName, buffer, 1024);
+        SecureZeroMemory(pKey, keySize);
+        VirtualUnlock(pKey, keySize);
+        delete[] pKey;
         entry.name = buffer;
         if (!entry.name.empty()) {
             GetWindowTextW(hWebsite, buffer, 1024);
@@ -2053,7 +2369,7 @@ void SaveXML() {
         }
     }
     else {
-        MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
+       // MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
         DeleteFileW(tempPath.c_str());
         return;
     }
@@ -2102,8 +2418,12 @@ void CopyToClipboard(HWND hWnd, const std::wstring& text) {
             }
         }
         CloseClipboard();
+        StartClipboardClearTimer(hWnd); // Clear after 15s
     }
 }
+
+
+ 
 
 void UpdateListViewColors() {
     InvalidateRect(hListView, nullptr, TRUE);
@@ -2553,4 +2873,112 @@ INT_PTR CALLBACK AboutNewDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
     }
     return (INT_PTR)FALSE;
     }
+}
+
+
+bool OutputDebugStringCheck() {
+    SetLastError(0x1234); // Set a known error
+    OutputDebugStringA("debug-check"); // If debugger is present, system sets error back to 0
+    return GetLastError() == 0;
+}
+
+
+// Add more anti-debugging techniques
+bool IsBeingDebugged() {
+    BOOL remoteDebugger = FALSE;
+    CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger);
+    return IsDebuggerPresent() || remoteDebugger;
+}
+
+// Check for debugger
+bool IsDebuggerAttached() {
+    return IsDebuggerPresent() || CheckRemoteDebuggerPresent(GetCurrentProcess(), new BOOL{});
+}
+
+// Check for popular VM processes
+bool IsRunningInVM() {
+    const wchar_t* suspiciousProcesses[] = {
+        L"vmtoolsd.exe",     // VMware Tools
+        L"vboxservice.exe",  // VirtualBox Guest Additions
+        L"vboxtray.exe",     // VirtualBox Tray
+        L"qemu-ga.exe",      // QEMU Guest Agent
+        L"vmwareuser.exe",   // VMware User Agent
+        L"wireshark.exe",    // Packet analyzer
+        L"processhacker.exe"
+    };
+
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) return false;
+
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(hSnapshot, &pe)) {
+        do {
+            for (const auto& proc : suspiciousProcesses) {
+                if (_wcsicmp(proc, pe.szExeFile) == 0) {
+                    CloseHandle(hSnapshot);
+                    return true;
+                }
+            }
+        } while (Process32NextW(hSnapshot, &pe));
+    }
+    CloseHandle(hSnapshot);
+    return false;
+}
+
+// Check for VM hardware via CPUID
+bool IsVMCPU() {
+    int cpuInfo[4] = { 0 };
+    __cpuid(cpuInfo, 1);
+    return (cpuInfo[2] >> 31) & 1; // Hypervisor bit
+}
+
+
+// Define the function pointer type for NtQueryInformationProcess
+typedef NTSTATUS(NTAPI* pNtQueryInformationProcess)(
+    HANDLE ProcessHandle,
+    PROCESSINFOCLASS ProcessInformationClass,
+    PVOID ProcessInformation,
+    ULONG ProcessInformationLength,
+    PULONG ReturnLength
+    );
+
+ 
+
+
+bool NtQueryDebugFlag() {
+    PROCESS_BASIC_INFORMATION pbi = {};
+    ULONG len = 0;
+
+    auto NtQueryInformationProcess = reinterpret_cast<pNtQueryInformationProcess>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess")
+        );
+
+    if (!NtQueryInformationProcess)
+        return false;
+
+    NTSTATUS status = NtQueryInformationProcess(
+        GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), &len);
+
+    if (status != 0 || !pbi.PebBaseAddress)
+        return false;
+
+    // PEB offset 0x2 (BeingDebugged flag)
+    BYTE* pBeingDebugged = (BYTE*)pbi.PebBaseAddress + 2;
+    return *pBeingDebugged != 0;
+}
+
+
+bool CheckForBreakpointsInCode() {
+    MEMORY_BASIC_INFORMATION mbi = {};
+    BYTE* codeBase = (BYTE*)CheckForBreakpointsInCode; // start near this function
+    SIZE_T checkSize = 512; // check first 512 bytes of current function
+
+    VirtualQuery(codeBase, &mbi, sizeof(mbi));
+    if (mbi.State != MEM_COMMIT || !(mbi.Protect & PAGE_EXECUTE_READ)) return false;
+
+    for (SIZE_T i = 0; i < checkSize; ++i) {
+        if (codeBase[i] == 0xCC) return true; // 0xCC = INT3
+    }
+    return false;
 }
