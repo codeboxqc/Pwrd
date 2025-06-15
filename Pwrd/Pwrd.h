@@ -11,7 +11,8 @@ struct PasswordEntry {
     std::wstring email;
     std::wstring user;
     std::wstring password;
-    std::wstring note;
+     std::wstring note;
+    
     COLORREF color;
     std::wstring category; // Added for category support
     std::wstring creationDate;

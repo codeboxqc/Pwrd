@@ -117,7 +117,7 @@ bool updown = true;
 
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
 static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new dialog
-
+HFONT g_hNoteFont = nullptr;
 // Registry key for startup
 #define REG_RUN_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_NAME L"Pwrd"
@@ -283,80 +283,7 @@ void Transparent(HWND hWnd, int alpha) {
     SetLayeredWindowAttributes(hWnd, RGB(0, 0, 0), (BYTE)alpha, LWA_ALPHA);
 }
 
-
-/*
-void GenerateAndSetPassword(HWND hEdit, int length) {
-    if (length < 8) length = 8;
-    const wchar_t charset[] =
-        L"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        L"abcdefghijklmnopqrstuvwxyz"
-        L"0123456789"
-        L"!@#$%^&*()-_=+[]{}<>?/|";
-
-    const size_t charsetSize = wcslen(charset);
-
-
-
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<size_t> dist(0, charsetSize - 1);
-    std::wstring password;
-    password.reserve(length);
-    for (int i = 0; i < length; ++i) {
-        password += charset[dist(gen)];
-    }
-    SetWindowTextW(hEdit, password.c_str());
-    UpdatePasswordStrength(hEdit, hEdit);
-}
-*/
-
-
-/*
-void GenerateSecurePassword(HWND hEdit,
-    size_t length = 16,
-    bool  skipAmbiguous = true)
-{
-    // ---------- character pools ----------
-    const std::wstring UPPER = L"ABCDEFGHJKLMNPQRSTUVWXYZ";           // no I or O
-    const std::wstring LOWER = L"abcdefghijkmnopqrstuvwxyz";          // no l
-    const std::wstring DIGIT = L"23456789";                           // no 0 or 1
-    const std::wstring SYM = L"!@#$%^&*()-_=+[]{}<>?/|";
-
-    std::wstring allPool = UPPER + LOWER + DIGIT + SYM;
-    if (!skipAmbiguous) {
-        allPool += L"IOl01|"; // add back the ambiguities if caller wants
-    }
-
-    auto rndByte = [](BYTE* buf, DWORD len) {
-        BCryptGenRandom(nullptr, buf, len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-        };
-
-    // ---------- guarantee one from each set ----------
-    std::wstring pwd;
-    BYTE b;
-    rndByte(&b, 1);     pwd += UPPER[b % UPPER.size()];
-    rndByte(&b, 1);     pwd += LOWER[b % LOWER.size()];
-    rndByte(&b, 1);     pwd += DIGIT[b % DIGIT.size()];
-    rndByte(&b, 1);     pwd += SYM[b % SYM.size()];
-
-    // ---------- fill the rest ----------
-    while (pwd.size() < length) {
-        rndByte(&b, 1);
-        pwd += allPool[b % allPool.size()];
-    }
-
-    // ---------- Fisher‑Yates shuffle ----------
-    for (size_t i = pwd.size() - 1; i > 0; --i) {
-        rndByte(&b, 1);
-        size_t j = b % (i + 1);
-        std::swap(pwd[i], pwd[j]);
-    }
-
-    SetWindowTextW(hEdit, pwd.c_str());
-    UpdatePasswordStrength(hEdit, hEdit);
-}
-*/
+ 
 
 // Optional: Military grade password with predefined settings
 void GenerateMilitaryGradePassword(HWND hEdit, size_t length = 32) {
@@ -369,6 +296,67 @@ double CalculatePasswordEntropy(size_t length, size_t characterSetSize) {
 }
 
 
+void NormalizeLineEndings(std::wstring& text) {
+    std::wstring result;
+    result.reserve(text.length());
+    bool lastWasCR = false;
+
+    for (size_t i = 0; i < text.length(); ++i) {
+        wchar_t c = text[i];
+
+        if (c == L'\r') {
+            if (lastWasCR) {
+                // Collapse consecutive \r by ignoring this one; we'll add \r\n later if needed
+                continue;
+            }
+            lastWasCR = true;
+            continue; // Skip \r, wait for \n or other char
+        }
+
+        if (c == L'\n') {
+            if (lastWasCR) {
+                // Found \r\n, keep it as is
+                result += L'\r';
+                result += L'\n';
+                lastWasCR = false;
+            }
+            else {
+                // Standalone \n, convert to \r\n, but only if not already preceded by \r
+                if (!result.empty() && result.back() != L'\n') {
+                    result += L'\r';
+                    result += L'\n';
+                }
+                else if (result.empty()) {
+                    // Start of string, just add \r\n
+                    result += L'\r';
+                    result += L'\n';
+                }
+                // If result.back() == L'\n', skip to avoid duplicating \n
+            }
+            continue;
+        }
+
+        // Non-line-ending character
+        if (lastWasCR) {
+            // Standalone \r before a non-\n character, convert to \r\n
+            if (result.empty() || result.back() != L'\n') {
+                result += L'\r';
+                result += L'\n';
+            }
+            lastWasCR = false;
+        }
+        result += c;
+    }
+
+    // Handle trailing \r
+    if (lastWasCR && (result.empty() || result.back() != L'\n')) {
+        result += L'\r';
+        result += L'\n';
+    }
+
+    text = std::move(result);
+}
+
 void GenerateSecurePassword(HWND hEdit,
     size_t length,
     bool skipAmbiguous,
@@ -379,6 +367,13 @@ void GenerateSecurePassword(HWND hEdit,
     const std::wstring LOWER = L"abcdefghijkmnopqrstuvwxyz";          // no l
     const std::wstring DIGIT = L"23456789";                           // no 0 or 1
     const std::wstring SYM = L"!@#$%^&*()-_=+[]{}<>?/|\\~`;:\"'.,";   // Extended symbols
+
+    //no I or O 0 or 1
+    // /Error‑prone contexts  +visual impairments or dyslexia +
+    //Low cost, high payoff – Removing four characters out of ~90 barely 
+    //dents entropy (≈ 0.06 bits per character) but spares frustration.
+    ///But I want them back! -> GenerateSecurePassword(hEdit, 16, /*skipAmbiguous =*/false, /*militaryGrade =*/false);
+
 
     // Military grade additions
     //Best Practice
@@ -498,6 +493,28 @@ void TestEncryptFile() {
         MessageBoxW(nullptr, msg, L"Error", MB_OK | MB_ICONERROR);
     }
 }
+
+
+// Function to retrieve the text from a window handle dynamically
+std::wstring getWindowTextDynamic(HWND hWnd) {
+    if (!hWnd) {
+        return L""; // Return an empty string if the handle is invalid
+    }
+
+    // Get the length of the text in the window
+    int length = GetWindowTextLengthW(hWnd);
+    if (length == 0) {
+        return L""; // Return an empty string if no text is present
+    }
+
+    // Allocate a buffer to hold the text
+    std::wstring text(length, L'\0');
+    GetWindowTextW(hWnd, &text[0], length + 1);
+
+    return text;
+}
+
+
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
@@ -683,13 +700,13 @@ void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
     SendMessageW(hTooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
-void ApplyEntryChanges(HWND hWnd, int entryIndex) {
+void ApplyEntryChanges2(HWND hWnd, int entryIndex) {
     if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
         return;
     }
 
     PasswordEntry updatedEntry;
-    WCHAR buffer[2048];
+    WCHAR buffer[8024];
 
     GetWindowTextW(hName, buffer, ARRAYSIZE(buffer));
     updatedEntry.name = buffer;
@@ -705,6 +722,41 @@ void ApplyEntryChanges(HWND hWnd, int entryIndex) {
     updatedEntry.note = buffer;
     GetWindowTextW(hCategory, buffer, ARRAYSIZE(buffer));
     updatedEntry.category = buffer;
+    updatedEntry.color = currentColor;
+    updatedEntry.creationDate = entries[entryIndex].creationDate;
+
+    entries[entryIndex] = updatedEntry;
+    g_lastSelectedEntryIndex = entryIndex;
+
+    SaveXML();
+    PopulateListView();
+}
+
+void ApplyEntryChanges(HWND hWnd, int entryIndex) {
+    if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
+        return;
+    }
+
+    PasswordEntry updatedEntry;
+
+    // Helper function to get window text dynamically
+    auto getWindowTextDynamic = [](HWND hWnd) -> std::wstring {
+        int len = GetWindowTextLengthW(hWnd) + 1;
+        std::vector<wchar_t> buffer(len);
+        GetWindowTextW(hWnd, buffer.data(), len);
+        std::wstring text(buffer.data());
+        NormalizeLineEndings(text); // Ensure \r\n
+        return text;
+        };
+
+    updatedEntry.name = getWindowTextDynamic(hName);
+    updatedEntry.website = getWindowTextDynamic(hWebsite);
+    updatedEntry.email = getWindowTextDynamic(hEmail);
+    updatedEntry.user = getWindowTextDynamic(hUser);
+    updatedEntry.password = getWindowTextDynamic(hPassword);
+    //updatedEntry.note = getWindowTextDynamic(hNote);
+    updatedEntry.note = getWindowTextDynamic(hNote); // \r\n preserved
+    updatedEntry.category = getWindowTextDynamic(hCategory);
     updatedEntry.color = currentColor;
     updatedEntry.creationDate = entries[entryIndex].creationDate;
 
@@ -877,8 +929,29 @@ void ini(HWND hWnd)
     // Note field (increased spacing: 50 from previous to avoid overlap)
     CreateWindow(L"STATIC", L"Note", WS_CHILD | WS_VISIBLE,
         220, 340, 60, 20, hWnd, nullptr, hInst, nullptr);
-    hNote = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
+
+
+    /////////////////////
+    hNote = CreateWindow(L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_AUTOHSCROLL,
         300, 340, 350, 100, hWnd, (HMENU)IDC_NOTE, hInst, nullptr);
+    ShowScrollBar(hNote, SB_VERT, TRUE);
+    ShowScrollBar(hNote, SB_HORZ, FALSE);
+    SendMessage(hNote, EM_LIMITTEXT, 32768, 0); // Set 32KB limit
+
+
+     LONG_PTR noteStyle = 0;
+     noteStyle = GetWindowLongPtr(hNote, GWL_STYLE);
+     SetWindowLongPtr(hNote, GWL_STYLE, noteStyle | ES_MULTILINE);
+      
+    g_hNoteFont = CreateFont(
+        12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        FIXED_PITCH | FF_MODERN, L"Consolas");
+    SendMessage(hNote, WM_SETFONT, (WPARAM)g_hNoteFont, TRUE);
+    ///////////////////
+
+
     hCopyNoteBtn = CreateWindow(L"BUTTON", L"Copy", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         654, 340, 50, 20, hWnd, (HMENU)IDC_COPY_NOTE, hInst, nullptr);
 
@@ -894,6 +967,7 @@ void ini(HWND hWnd)
         474, 500, 80, 20, hWnd, (HMENU)IDC_SEARCH, hInst, nullptr);
     resetBtn = CreateWindow(L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         564, 500, 80, 20, hWnd, (HMENU)IDC_reset, hInst, nullptr);
+
     hSearchEdit = CreateWindow(L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
         220, 500, 240, 20, hWnd, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
 
@@ -1349,13 +1423,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                             g_isInsideApplyChanges = false;
                         }
 
+                        std::wstring note = entries[idx].note;
+                         NormalizeLineEndings(note); // Ensure \r\n for display
+
                         SetWindowTextW(hName, entries[idx].name.c_str());
                         SetWindowTextW(hWebsite, entries[idx].website.c_str());
                         SetWindowTextW(hEmail, entries[idx].email.c_str());
                         SetWindowTextW(hUser, entries[idx].user.c_str());
                         SetWindowTextW(hPassword, entries[idx].password.c_str());
-                        SetWindowTextW(hNote, entries[idx].note.c_str());
+
+                        SetWindowTextW(hNote, note.c_str());
+                        InvalidateRect(hNote, NULL, TRUE); // Force redraw
+                        UpdateWindow(hNote); // Ensure immediate update
                         SetWindowTextW(hCategory, entries[idx].category.c_str());
+
                         currentColor = entries[idx].color;
                         g_lastSelectedEntryIndex = idx;
                         g_dataModifiedInFields = false;
@@ -1970,9 +2051,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         case IDC_COPY_NOTE:
         {
-            WCHAR buffer[1024];
-            GetWindowTextW(hNote, buffer, 1024);
+            WCHAR buffer[8024];
+            GetWindowTextW(hNote, buffer, 8024);
             CopyToClipboard(hWnd, buffer);
+
+             
+            
+
             break;
         }
         case IDM_ABOUT:
@@ -1987,10 +2072,40 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
 
+    //Intercept the paste operation
+    case WM_PASTE:
+    {
+        if (GetFocus() == hNote && OpenClipboard(hWnd)) {
+            HANDLE hClip = GetClipboardData(CF_UNICODETEXT);
+            if (hClip) {
+                wchar_t* clipText = (wchar_t*)GlobalLock(hClip);
+                if (clipText) {
+                    std::wstring text = clipText;
+                    NormalizeLineEndings(text); // Convert \n to \r\n
+                    // Replace current selection with normalized text
+                    SendMessage(hNote, EM_REPLACESEL, TRUE, (LPARAM)text.c_str());
+                    GlobalUnlock(hClip);
+                    CloseClipboard();
+                    return 0; // Handled
+                }
+                GlobalUnlock(hClip);
+            }
+            CloseClipboard();
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+
     case WM_KEYDOWN:
     {
 
         ResetAutoLockTimer(hWnd);
+
+        if (wParam == VK_RETURN && GetFocus() == hNote) {
+            // Insert \r\n in hNote
+            SendMessage(hNote, WM_CHAR, L'\r', lParam);
+            SendMessage(hNote, WM_CHAR, L'\n', lParam);
+            return 0; // Prevent default processing
+        }
 
         if (wParam == VK_ESCAPE)
         {
@@ -2067,7 +2182,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CLOSE:
     {
         PasswordEntry entry;
-        WCHAR buffer[1024];
+        WCHAR buffer[8024];
         GetWindowTextW(hName, buffer, 1024);
 
         SecureZeroMemory(pKey, keySize);
@@ -2084,7 +2199,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             entry.user = buffer;
             GetWindowTextW(hPassword, buffer, 1024);
             entry.password = buffer;
-            GetWindowTextW(hNote, buffer, 1024);
+            GetWindowTextW(hNote, buffer, 8024);
             entry.note = buffer;
             GetWindowTextW(hCategory, buffer, 1024);
             entry.category = buffer;
@@ -2137,6 +2252,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (hDarkGreyBrush)        DeleteObject(hDarkGreyBrush);
         if (butBrush)      DeleteObject(butBrush);
         if (hToggleStartupBtn) DestroyWindow(hToggleStartupBtn);
+        if (g_hNoteFont) {
+            DeleteObject(g_hNoteFont);
+            g_hNoteFont = nullptr;
+        }
 
   
         if (hTooltip)
@@ -2235,7 +2354,7 @@ bool LoadXML(std::wstring xmlPath)
         entries.clear();
         return true;
     }
-
+     
     // Decrypt g_userKeyForXml
     std::vector<BYTE> tempKey = g_userKeyForXml; // Copy to avoid modifying original
     if (!tempKey.empty()) {
@@ -2286,6 +2405,15 @@ bool LoadXML(std::wstring xmlPath)
 
         for (tinyxml2::XMLElement* entryElement = root->FirstChildElement("Entry"); entryElement; entryElement = entryElement->NextSiblingElement("Entry")) {
             PasswordEntry entry;
+            auto getText = [](tinyxml2::XMLElement* elem) -> std::wstring {
+                if (elem && elem->GetText()) {
+                    std::wstring text = Utf8ToWstring(elem->GetText());
+                    NormalizeLineEndings(text); // Normalize to \r\n
+                    return text;
+                }
+                return L"";
+                };
+
             const char* name = entryElement->FirstChildElement("Name") ? entryElement->FirstChildElement("Name")->GetText() : "";
             entry.name = Utf8ToWstring(name);
             const char* website = entryElement->FirstChildElement("Website") ? entryElement->FirstChildElement("Website")->GetText() : "";
@@ -2364,6 +2492,9 @@ void SaveXML()
     std::wstring xmlPath = GetFullFilePath(L"data.xml");
     std::wstring tempPath = GetFullFilePath(L"temp_plain.xml");
 
+
+ 
+
     // Generate backup filename with current date
     SYSTEMTIME st;
     GetSystemTime(&st);
@@ -2389,9 +2520,11 @@ void SaveXML()
     for (const auto& entry : entries) {
         tinyxml2::XMLElement* entryElement = doc.NewElement("Entry");
 
-        auto createTextElement = [&](const char* elementName, const std::wstring& text) {
+        auto createTextElement = [&](const char* elementName, std::wstring text) {
+            NormalizeLineEndings(text); // Ensure \r\n before saving
             tinyxml2::XMLElement* elem = doc.NewElement(elementName);
-            elem->SetText(WstringToUtf8(text).c_str());
+            std::string utf8Text = WstringToUtf8(text);
+            elem->SetText(utf8Text.c_str());
             entryElement->InsertEndChild(elem);
             };
 
@@ -2477,8 +2610,23 @@ VOID CALLBACK ClearClipboardTimerProc(HWND hWnd, UINT uMsg, UINT_PTR idEvent, DW
 }
 
 void CopyToClipboard(HWND hWnd, const std::wstring& text) {
+   
+    
+    std::wofstream debugLog(GetFullFilePath(L"debug_clipboard.txt"), std::ios::app);
+    if (debugLog.is_open()) {
+        debugLog << L"--- Clipboard Copy ---\n";
+        for (wchar_t c : text) {
+            if (c == L'\r') debugLog << L"\\r";
+            else if (c == L'\n') debugLog << L"\\n";
+            else debugLog << c;
+        }
+        debugLog << L"\n---\n";
+        debugLog.close();
+    }
+    
     if (OpenClipboard(hWnd)) {
         EmptyClipboard();
+ 
 
         HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, (text.size() + 1) * sizeof(wchar_t));
         if (hMem) {
@@ -3053,20 +3201,11 @@ bool IsRunningInVM() {
     return false;
 }
 
-// Check for VM hardware via CPUID
 /*
-bool IsVMCPU() {
-    int cpuInfo[4] = { 0 };
-    __cpuid(cpuInfo, 1);
-    return (cpuInfo[2] >> 31) & 1; // Hypervisor bit
-}
-*/
-
-/*
-bool CheckPEBBeingDebuggedFlag() {
-    // Works only on 64-bit Windows
-    PBYTE peb = (PBYTE)__readgsqword(0x60); // GS:[0x60] = PEB
-    return peb[2] != 0; // BeingDebugged is byte at offset 2
+ bool CheckNtGlobalFlag() {
+    // Works on 32-bit and 64-bit Windows
+    PPEB pPeb = (PPEB)__readgsqword(0x60); // For x64
+    return (pPeb->NtGlobalFlag & 0x70) != 0; // FLG_HEAP_ENABLE_TAIL_CHECK, FLG_HEAP_ENABLE_FREE_CHECK, FLG_HEAP_VALIDATE_PARAMETERS
 }
 */
 
@@ -3121,7 +3260,8 @@ bool NtQueryDebugFlag()
         &pbi, sizeof pbi, nullptr) != 0)
         return false;
 
-    auto peb = static_cast<PBYTE>(pbi.PebBaseAddress);
+    //auto peb = static_cast<PBYTE>(pbi.PebBaseAddress);
+    auto peb = reinterpret_cast<PBYTE>(pbi.PebBaseAddress);
     bool beingDebugged = peb[2] != 0;          // PEB->BeingDebugged
 
     // Secondary cross‑check:
