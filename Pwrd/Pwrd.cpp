@@ -381,6 +381,8 @@ void GenerateSecurePassword(HWND hEdit,
     const std::wstring SYM = L"!@#$%^&*()-_=+[]{}<>?/|\\~`;:\"'.,";   // Extended symbols
 
     // Military grade additions
+    //Best Practice
+    //Use extended symbols only if the target website allows it.
     const std::wstring EXTENDED_SYM = L"§±¿¡€£¥©®™°µ¶";              // Unicode symbols
     const std::wstring MATH_SYM = L"∑∏∆∇∈∉∪∩⊂⊃⊄⊅";               // Mathematical symbols
 
@@ -523,17 +525,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 
-      // if(IsVMCPU()==true) return FALSE;
+     //   if(IsVMCPU()==1) return FALSE;
 
-      // if (IsDebuggerAttached() == true) return FALSE;
+     if (IsDebuggerAttached() == true) return FALSE;
 
-     //   if (IsRunningInVM() == true) return FALSE;
+        if (IsRunningInVM() == true) return FALSE;
 
-      //  if (IsBeingDebugged() == true) return FALSE;  
+      if (IsBeingDebugged() == true) return FALSE;  
 
-     //  if (OutputDebugStringCheck() == true) return FALSE;
+      if (OutputDebugStringCheck() == true) return FALSE;
 
-      // if (NtQueryDebugFlag() == true) return FALSE;
+        if (NtQueryDebugFlag() == true) return FALSE;
 
        
    
@@ -1081,7 +1083,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 
         if (!VerifyExecutableIntegrity()) {
-            MessageBoxW(hWnd, L"Executable integrity verification failed.", L"Security Error", MB_OK | MB_ICONERROR);
+           // MessageBoxW(hWnd, L"Executable integrity verification failed.", L"Security Error", MB_OK | MB_ICONERROR);
             //  return 0;
         }
 
@@ -1091,10 +1093,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         SecureZeroMemory(pKey, 32);
         VirtualLock(pKey, keySize); // Prevent swapping to disk
 
-        /***************************/
-        //auto* data = new WindowData();
-        //SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
-        /**************************/
+        
 
 
         hInstance_WndProc = ((LPCREATESTRUCT)lParam)->hInstance;
@@ -3004,9 +3003,9 @@ INT_PTR CALLBACK AboutNewDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 
 
 bool OutputDebugStringCheck() {
-    SetLastError(0x1234); // Set a known error
-    OutputDebugStringA("debug-check"); // If debugger is present, system sets error back to 0
-    return GetLastError() == 0;
+    BOOL remote = FALSE;
+    CheckRemoteDebuggerPresent(GetCurrentProcess(), &remote);
+    return IsDebuggerPresent() || remote;
 }
 
 
@@ -3017,21 +3016,22 @@ bool IsBeingDebugged() {
     return IsDebuggerPresent() || remoteDebugger;
 }
 
+
 // Check for debugger
 bool IsDebuggerAttached() {
-    return IsDebuggerPresent() || CheckRemoteDebuggerPresent(GetCurrentProcess(), new BOOL{});
+    BOOL remoteDebuggerPresent = FALSE;
+    CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebuggerPresent);
+    return IsDebuggerPresent() || remoteDebuggerPresent;
 }
 
 // Check for popular VM processes
 bool IsRunningInVM() {
-    const wchar_t* suspiciousProcesses[] = {
-        L"vmtoolsd.exe",     // VMware Tools
-        L"vboxservice.exe",  // VirtualBox Guest Additions
-        L"vboxtray.exe",     // VirtualBox Tray
-        L"qemu-ga.exe",      // QEMU Guest Agent
-        L"vmwareuser.exe",   // VMware User Agent
-        L"wireshark.exe",    // Packet analyzer
-        L"processhacker.exe"
+     
+
+    const wchar_t* guestOnlyProcs[] = {
+        L"vmtoolsd.exe",
+        L"vboxservice.exe",
+        L"qemu-ga.exe"
     };
 
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -3041,7 +3041,7 @@ bool IsRunningInVM() {
     pe.dwSize = sizeof(pe);
     if (Process32FirstW(hSnapshot, &pe)) {
         do {
-            for (const auto& proc : suspiciousProcesses) {
+            for (const auto& proc : guestOnlyProcs) {
                 if (_wcsicmp(proc, pe.szExeFile) == 0) {
                     CloseHandle(hSnapshot);
                     return true;
@@ -3054,12 +3054,41 @@ bool IsRunningInVM() {
 }
 
 // Check for VM hardware via CPUID
+/*
 bool IsVMCPU() {
     int cpuInfo[4] = { 0 };
     __cpuid(cpuInfo, 1);
     return (cpuInfo[2] >> 31) & 1; // Hypervisor bit
 }
+*/
 
+/*
+bool CheckPEBBeingDebuggedFlag() {
+    // Works only on 64-bit Windows
+    PBYTE peb = (PBYTE)__readgsqword(0x60); // GS:[0x60] = PEB
+    return peb[2] != 0; // BeingDebugged is byte at offset 2
+}
+*/
+
+
+bool IsVMCPU() {
+    int cpuInfo[4] = { 0 };
+    __cpuid(cpuInfo, 1);
+    if (!((cpuInfo[2] >> 31) & 1)) return false; // Not under hypervisor
+
+    char hyperVendor[13] = {};
+    __cpuid(cpuInfo, 0x40000000); // Hypervisor vendor string
+    memcpy(&hyperVendor[0], &cpuInfo[1], 4); // EBX
+    memcpy(&hyperVendor[4], &cpuInfo[2], 4); // ECX
+    memcpy(&hyperVendor[8], &cpuInfo[3], 4); // EDX
+
+    return (
+        strcmp(hyperVendor, "Microsoft Hv") == 0 ||
+        strcmp(hyperVendor, "VMwareVMware") == 0 ||
+        strcmp(hyperVendor, "KVMKVMKVM") == 0 ||
+        strcmp(hyperVendor, "XenVMMXenVMM") == 0
+        );
+}
 
 // Define the function pointer type for NtQueryInformationProcess
 typedef NTSTATUS(NTAPI* pNtQueryInformationProcess)(
@@ -3073,27 +3102,37 @@ typedef NTSTATUS(NTAPI* pNtQueryInformationProcess)(
 
 
 
-bool NtQueryDebugFlag() {
-    PROCESS_BASIC_INFORMATION pbi = {};
-    ULONG len = 0;
+bool NtQueryDebugFlag()
+{
+    // --- resolve NtQueryInformationProcess once ---
+    using pNtQIP = NTSTATUS(NTAPI*)(
+        HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 
-    auto NtQueryInformationProcess = reinterpret_cast<pNtQueryInformationProcess>(
-        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess")
-        );
+    static pNtQIP NtQIP = reinterpret_cast<pNtQIP>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+            "NtQueryInformationProcess"));
 
-    if (!NtQueryInformationProcess)
+    if (!NtQIP)
         return false;
 
-    NTSTATUS status = NtQueryInformationProcess(
-        GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), &len);
-
-    if (status != 0 || !pbi.PebBaseAddress)
+    PROCESS_BASIC_INFORMATION pbi{};
+    if (NtQIP(GetCurrentProcess(),
+        ProcessBasicInformation,
+        &pbi, sizeof pbi, nullptr) != 0)
         return false;
 
-    // PEB offset 0x2 (BeingDebugged flag)
-    BYTE* pBeingDebugged = (BYTE*)pbi.PebBaseAddress + 2;
-    return *pBeingDebugged != 0;
+    auto peb = static_cast<PBYTE>(pbi.PebBaseAddress);
+    bool beingDebugged = peb[2] != 0;          // PEB->BeingDebugged
+
+    // Secondary cross‑check:
+    bool apiSays = IsDebuggerPresent();
+
+    std::printf("PEB.BeingDebugged = %d  IsDebuggerPresent = %d\n",
+        beingDebugged, apiSays);
+
+    return beingDebugged;
 }
+
 
 
 bool CheckForBreakpointsInCode() {
@@ -3291,7 +3330,7 @@ bool VerifyExecutableIntegrity()
     if (!VerifyAuthenticode(exePath)) {
         
         
-       return false; //no cert found
+      // return false; //no cert found
     }
 
     // Fallback: Verify SHA-256 hash
