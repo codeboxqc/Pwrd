@@ -7,6 +7,12 @@
 
 #define _WIN32_WINNT _WIN32_WINNT_WIN10
 
+
+ 
+ // Define the missing constant for vertical foreground color
+ 
+
+
 #include "pch.h"
 #include "framework.h"
 #include "Pwrd.h"
@@ -34,6 +40,11 @@
 
 #include <wintrust.h>
 #include <softpub.h>
+
+#include <uxtheme.h> // Include this header for Flat Scroll Bar constants
+
+#pragma comment(lib, "uxtheme.lib") // Link against the uxtheme library
+
 #pragma comment(lib, "wintrust.lib")
 
 #pragma comment(lib, "Kernel32.lib") // Link against Kernel32.lib
@@ -71,7 +82,7 @@ HWND hAddBtn = nullptr, hDeleteBtn = nullptr, hSearchBtn = nullptr, hColorBtn = 
 HWND hUpdateBtn = nullptr;
 HWND hCopyNameBtn = nullptr, hCopyWebsiteBtn = nullptr, hCopyEmailBtn = nullptr, hCopyUserBtn = nullptr, hCopyPasswordBtn = nullptr, hCopyNoteBtn = nullptr;
 HWND AutoBtn = nullptr, XBtn = nullptr, MidBtn = nullptr, LowBtn = nullptr, hBtnicon = nullptr, resetBtn = nullptr;
-HWND AutoBtn2 = nullptr;
+HWND AutoBtn2 = nullptr, hChangePasswordBtn = nullptr;
 HWND hStrengthLabel = nullptr, hTogglePasswordBtn = nullptr, hSortCombo = nullptr, hCategory = nullptr, hRestoreBackupBtn = nullptr, hToggleThemeBtn = nullptr;
 COLORREF currentColor = RGB(222, 222, 8);
 COLORREF dark = RGB(33, 33, 33);
@@ -85,10 +96,7 @@ HBRUSH butBrush = nullptr;
 ////////////////////
 std::vector<PasswordEntry> entries;
 
-//struct WindowData {
-//    std::vector<PasswordEntry> entries;
- //   int lastSelectedIndex = -1;
-///////////////////////////
+ 
 
 
 static int g_lastSelectedEntryIndex = -1;
@@ -110,9 +118,9 @@ static UINT_PTR g_lockTimer = 0;
 
 #define CLIPBOARD_CLEAR_TIMER 3 // Distinct from ONE (1) and AUTO_LOCK_TIMER (2)
 static UINT_PTR g_clipboardTimer = 0;
-
+INT_PTR CALLBACK ChangePasswordDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 bool IsValidInput(const std::wstring& input);
-
+bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const std::wstring& newPassword);
 bool updown = true;
 
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
@@ -193,10 +201,7 @@ net start cryptsvc
 sfc /scannow
 */
 
-//std::vector<PasswordEntry> entries;
-//bool LoadXML(std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
-//bool SaveXML(const std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
-
+ 
 void PopulateListView();
 
 void UpdateListViewColors();
@@ -255,6 +260,7 @@ void ClearSensitiveDataAndUI(HWND hWnd, bool preserveListView = false) {
     }
 
     entries.clear();
+    
     g_isPinValidated = false;
     g_pin_attempts = 0;
     if (hName) SetWindowTextW(hName, L"");
@@ -477,23 +483,7 @@ void GenerateSecurePassword(HWND hEdit,
 
 
 
-void TestEncryptFile() {
-    std::wstring testInput = GetFullFilePath(L"test.txt");
-    std::wstring testOutput = GetFullFilePath(L"test_encrypted.bin");
-    std::ofstream testFile(testInput, std::ios::binary);
-    testFile << "Test data for encryption";
-    testFile.close();
-    std::wstring password(g_userKeyForXml.begin(), g_userKeyForXml.end());
-    if (EncryptFile(testInput, testOutput, password)) {
-        MessageBoxW(nullptr, L"Test encryption succeeded.", L"Success", MB_OK);
-    }
-    else {
-        WCHAR msg[256];
-        swprintf_s(msg, L"Test encryption failed. Last error: %lu", GetLastError());
-        MessageBoxW(nullptr, msg, L"Error", MB_OK | MB_ICONERROR);
-    }
-}
-
+ 
 
 // Function to retrieve the text from a window handle dynamically
 std::wstring getWindowTextDynamic(HWND hWnd) {
@@ -700,37 +690,7 @@ void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
     SendMessageW(hTooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
-void ApplyEntryChanges2(HWND hWnd, int entryIndex) {
-    if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
-        return;
-    }
-
-    PasswordEntry updatedEntry;
-    WCHAR buffer[8024];
-
-    GetWindowTextW(hName, buffer, ARRAYSIZE(buffer));
-    updatedEntry.name = buffer;
-    GetWindowTextW(hWebsite, buffer, ARRAYSIZE(buffer));
-    updatedEntry.website = buffer;
-    GetWindowTextW(hEmail, buffer, ARRAYSIZE(buffer));
-    updatedEntry.email = buffer;
-    GetWindowTextW(hUser, buffer, ARRAYSIZE(buffer));
-    updatedEntry.user = buffer;
-    GetWindowTextW(hPassword, buffer, ARRAYSIZE(buffer));
-    updatedEntry.password = buffer;
-    GetWindowTextW(hNote, buffer, ARRAYSIZE(buffer));
-    updatedEntry.note = buffer;
-    GetWindowTextW(hCategory, buffer, ARRAYSIZE(buffer));
-    updatedEntry.category = buffer;
-    updatedEntry.color = currentColor;
-    updatedEntry.creationDate = entries[entryIndex].creationDate;
-
-    entries[entryIndex] = updatedEntry;
-    g_lastSelectedEntryIndex = entryIndex;
-
-    SaveXML();
-    PopulateListView();
-}
+ 
 
 void ApplyEntryChanges(HWND hWnd, int entryIndex) {
     if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
@@ -831,14 +791,47 @@ void ini(HWND hWnd)
     animationChars = getRandomAnimationSet();
 
 
+    
+    /*
+    NONCLIENTMETRICS ncm = { sizeof(ncm) };
+SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+*/
+
     hListView = CreateWindowEx(0, WC_LISTVIEW, L"",
-        // WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER, // Added LVS_NOCOLUMNHEADER
-        WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
+        
+        WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | WS_VSCROLL,
         10, 10, 200, 580, hWnd, (HMENU)IDC_LISTVIEW, hInst, nullptr);
 
 
+    
+    // Set scrollbar width system-wide
+    NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
 
+    
 
+    int thinWidth = 10; // desired width
+    int originalWidth = GetSystemMetrics(SM_CXVSCROLL); // Default vertical scrollbar width
+
+    // Initialize Flat Scroll Bar for ListView
+    if (!InitializeFlatSB(hListView)) {
+        std::wofstream log(GetFullFilePath(L"debug_scrollbar.txt"), std::ios::app);
+        log << L"Failed to initialize FlatSB, error: " << GetLastError() << L"\n";
+        log.close();
+    }
+    // Set scrollbar width
+    FlatSB_SetScrollProp(hListView, WSB_PROP_CXVSCROLL, thinWidth, TRUE);
+    // Optional: Match dark theme (approximate colors)
+    FlatSB_SetScrollProp(hListView, WSB_PROP_VBKGCOLOR, dark, FALSE); // Background
+    #define WSB_PROP_VFGCOLOR 0x00000009
+    FlatSB_SetScrollProp(hListView, WSB_PROP_VFGCOLOR, textColor, FALSE); // Thumb
+
+    ///*
+    //SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    //ncm.iScrollWidth = thinWidth; // Set scrollbar width to 10 pixels
+   // ncm.iScrollHeight = thinWidth; // Set horizontal scrollbar height for consistency
+    //SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    //*/
 
     LVCOLUMNW lvc = { 0 };
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -846,7 +839,7 @@ void ini(HWND hWnd)
     lvc.pszText = (LPWSTR)L"";
     ListView_InsertColumn(hListView, 0, &lvc);
     ListView_SetExtendedListViewStyle(hListView, LVS_EX_FULLROWSELECT);
-    ShowScrollBar(hListView, SB_VERT, FALSE);
+     ShowScrollBar(hListView, SB_VERT, TRUE);
 
     HWND hHeader = ListView_GetHeader(hListView);
     ListView_SetBkColor(hListView, dark);
@@ -939,7 +932,7 @@ void ini(HWND hWnd)
     ShowScrollBar(hNote, SB_HORZ, FALSE);
     SendMessage(hNote, EM_LIMITTEXT, 32768, 0); // Set 32KB limit
 
-
+      
      LONG_PTR noteStyle = 0;
      noteStyle = GetWindowLongPtr(hNote, GWL_STYLE);
      SetWindowLongPtr(hNote, GWL_STYLE, noteStyle | ES_MULTILINE);
@@ -1007,6 +1000,9 @@ void ini(HWND hWnd)
         440, 565, 140, 20, hWnd, (HMENU)IDC_TOGGLE_STARTUP, hInst, nullptr);
 
 
+    hChangePasswordBtn = CreateWindow(L"BUTTON", L"Change Password", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+        600, 565, 140, 20, hWnd, (HMENU)IDC_CHANGE_PASSWORD, hInst, nullptr);
+
 
     // Icon button
     HICON tmphIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_PWRD));
@@ -1067,14 +1063,15 @@ void ini(HWND hWnd)
         AddTooltip(hTooltip, hWnd, hRestoreBackupBtn, L"Restore from backup file");
         AddTooltip(hTooltip, hWnd, hToggleThemeBtn, L"Switch between dark and light themes");
         AddTooltip(hTooltip, hWnd, hToggleStartupBtn, L"Toggle whether the application starts with Windows");
-
+        AddTooltip(hTooltip, hWnd, hChangePasswordBtn, L"Change the master password");
 
 
         SendMessageW(hTooltip, TTM_ACTIVATE, TRUE, 0);
     }
 
     // Font setup
-    NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
+   // NONCLIENTMETRICS
+        ncm = { sizeof(NONCLIENTMETRICS) };
     SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
     ncm.lfMessageFont.lfHeight = 20;
     HFONT hFont = CreateFontIndirect(&ncm.lfMessageFont);
@@ -1189,7 +1186,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 
         ini(hWnd);
-        ShowScrollBar(hListView, SB_VERT, FALSE);
+        //ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         CreateTrayIcon(hWnd, hInstance_WndProc, IDI_PWRD);
@@ -1285,6 +1282,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_XBtn:
         case IDC_MidBtn:
         case IDC_LowBtn:
+        case IDC_CHANGE_PASSWORD:
         case IDC_AutoBtn:
         case IDC_AutoBtn2:
         case IDC_DELETE:
@@ -1321,6 +1319,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             case IDC_ADD: buttonText = L"Add"; break;
             case IDC_COLOR: buttonText = L"Pick Color"; break;
             case IDC_SEARCH: buttonText = L"Search"; break;
+            case IDC_CHANGE_PASSWORD: buttonText = L"Change Password"; break;
                 //case IDC_TOGGLE_PASSWORD: buttonText = isPasswordVisible ? L"Hide" : L"Show"; break;
             case IDC_RESTORE_BACKUP: buttonText = L"Restore"; break;
             case IDC_TOGGLE_THEME: buttonText = isDarkTheme ? L"Dark2 Theme" : L"Dark Theme"; break;
@@ -1358,7 +1357,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         HDC hdc = (HDC)wParam;
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, currentColor);
-        ShowScrollBar(hListView, SB_VERT, FALSE);
+        //ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         ShowWindow(hHeader, SW_HIDE);
@@ -1483,7 +1482,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (PtInRect(&rc, pt)) {
             SendMessage(hListView, WM_MOUSEWHEEL, wParam, lParam);
         }
-        ShowScrollBar(hListView, SB_VERT, FALSE);
+        //ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         ShowWindow(hHeader, SW_HIDE);
@@ -1630,6 +1629,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 
             break;
+
+        case IDC_CHANGE_PASSWORD:
+        {
+            DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_CHANGE_PASSWORD), hWnd, ChangePasswordDlgProc);
+            return 0;
+        }
 
         case IDC_NAME:
         case IDC_WEBSITE:
@@ -1919,7 +1924,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             UpdateListViewColors();
             hHeader = ListView_GetHeader(hListView);
             ShowWindow(hHeader, SW_HIDE);
-            ShowScrollBar(hListView, SB_VERT, FALSE);
+           // ShowScrollBar(hListView, SB_VERT, FALSE);
             ShowScrollBar(hListView, SB_HORZ, FALSE);
             SetFocus(hWnd);
             break;
@@ -2163,7 +2168,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 return TRUE;
             }
         }
-        ShowScrollBar(hListView, SB_VERT, FALSE);
+        //ShowScrollBar(hListView, SB_VERT, FALSE);
         ShowScrollBar(hListView, SB_HORZ, FALSE);
         hHeader = ListView_GetHeader(hListView);
         ShowWindow(hHeader, SW_HIDE);
@@ -2390,6 +2395,7 @@ bool LoadXML(std::wstring xmlPath)
         }
 
         entries.clear();
+        //entries.reserve(100);
 
         // Parse XML and populate entries
         tinyxml2::XMLElement* root = doc.FirstChildElement("Passwords");
@@ -3254,20 +3260,26 @@ bool NtQueryDebugFlag()
     if (!NtQIP)
         return false;
 
-    PROCESS_BASIC_INFORMATION pbi{};
+    PROCESS_BASIC_INFORMATION pbi{};  
     if (NtQIP(GetCurrentProcess(),
         ProcessBasicInformation,
         &pbi, sizeof pbi, nullptr) != 0)
         return false;
 
-    //auto peb = static_cast<PBYTE>(pbi.PebBaseAddress);
+    // IMPORTANT: Add a check for pbi.PebBaseAddress before casting and dereferencing
+    if (pbi.PebBaseAddress == nullptr)
+    {
+        std::printf("Error: PEB base address is NULL.\n");
+        return false; // Or handle this error condition appropriately
+    }
+
     auto peb = reinterpret_cast<PBYTE>(pbi.PebBaseAddress);
-    bool beingDebugged = peb[2] != 0;          // PEB->BeingDebugged
+    bool beingDebugged = peb[2] != 0;       // PEB->BeingDebugged
 
     // Secondary cross‑check:
     bool apiSays = IsDebuggerPresent();
 
-    std::printf("PEB.BeingDebugged = %d  IsDebuggerPresent = %d\n",
+    std::printf("PEB.BeingDebugged = %d   IsDebuggerPresent = %d\n",
         beingDebugged, apiSays);
 
     return beingDebugged;
@@ -3494,6 +3506,237 @@ bool VerifyExecutableIntegrity()
 
  
 
+std::vector<BYTE> tempKey;
 
+ // Function to change the master password
+bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const std::wstring& newPassword) {
+    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+
+    // Verify current password
+    std::ifstream inFile(pgpPath, std::ios::binary);
+    if (!inFile.is_open()) {
+        MessageBoxW(hWnd, L"Password file not found.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    std::vector<BYTE> fileData((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+    inFile.close();
+    if (fileData.size() < SALT_LENGTH + KEY_LENGTH) {
+        MessageBoxW(hWnd, L"Corrupted password file.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    std::vector<BYTE> storedSalt(fileData.begin(), fileData.begin() + SALT_LENGTH);
+    std::vector<BYTE> storedKey(fileData.begin() + SALT_LENGTH, fileData.begin() + SALT_LENGTH + KEY_LENGTH);
+
+    try {
+        std::vector<BYTE> enteredKey = GenerateKeyFromPassword(currentPassword, storedSalt);
+        if (enteredKey != storedKey) {
+            MessageBoxW(hWnd, L"Incorrect current password.", L"Error", MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        // Generate new key and salt for new password
+        auto [newKey, newSalt] = GenerateKeyAndSaltFromPassword(newPassword);
+        std::vector<BYTE> newKeyCopy = newKey;
+        size_t blockSize = CRYPTPROTECTMEMORY_BLOCK_SIZE;
+        size_t keySize = newKeyCopy.size();
+        size_t paddedSize = ((keySize + blockSize - 1) / blockSize) * blockSize;
+        if (keySize < paddedSize) {
+            newKeyCopy.resize(paddedSize, 0);
+        }
+        if (!newKeyCopy.empty()) {
+            DWORD cbData = static_cast<DWORD>(newKeyCopy.size());
+            if (!CryptProtectMemory(newKeyCopy.data(), cbData, CRYPTPROTECTMEMORY_SAME_PROCESS)) {
+                MessageBoxW(hWnd, L"Failed to encrypt new key in memory.", L"Error", MB_OK | MB_ICONERROR);
+                SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
+                return false;
+            }
+        }
+
+        // Update global key before saving XML
+        g_userKeyForXml = newKeyCopy;
+
+        // Save all entries to data.xml with new key
+        SaveXML(); // Assumes SaveXML uses g_userKeyForXml to encrypt data.xml
+
+        // Update password.pgp with new key and salt
+        std::ofstream outFile(pgpPath, std::ios::binary);
+        if (!outFile.is_open()) {
+            MessageBoxW(hWnd, L"Failed to update password file.", L"Error", MB_OK | MB_ICONERROR);
+            SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
+            g_userKeyForXml.clear();
+            return false;
+        }
+        outFile.write(reinterpret_cast<const char*>(newSalt.data()), newSalt.size());
+        outFile.write(reinterpret_cast<const char*>(newKey.data()), newKey.size());
+        outFile.close();
+
+        // Update validation flags
+        g_isPinValidated = true;
+        g_pin_attempts = 0;
+
+        // Clean up
+        SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
+
+        MessageBoxW(hWnd, L"Password changed successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
+        return true;
+    }
+    catch (const std::exception& e) {
+        WCHAR debugMsg[512];
+        swprintf_s(debugMsg, L"Error changing password: %S", e.what());
+        MessageBoxW(hWnd, debugMsg, L"Error", MB_OK | MB_ICONERROR);
+        SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
+        g_userKeyForXml.clear();
+        return false;
+    }
+}
+
+
+
+INT_PTR CALLBACK ChangePasswordDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    static HBRUSH hEditBrush = NULL;
+    static std::wstring currentPassword, newPassword, confirmPassword;
+
+    switch (message)
+    {
+    case WM_INITDIALOG:
+    {
+        if (isDarkTheme && hEditBrush == NULL) {
+            hEditBrush = CreateSolidBrush(RGB(50, 50, 50));
+        }
+        SetWindowTextW(hDlg, L"Change Master Password");
+        HWND hwndParent = GetParent(hDlg) ? GetParent(hDlg) : GetDesktopWindow();
+        RECT rcDlg, rcParent;
+        GetWindowRect(hDlg, &rcDlg);
+        GetWindowRect(hwndParent, &rcParent);
+        int nWidth = rcDlg.right - rcDlg.left;
+        int nHeight = rcDlg.bottom - rcDlg.top;
+        int x = rcParent.left + (rcParent.right - rcParent.left - nWidth) / 2;
+        int y = rcParent.top + (rcParent.bottom - rcParent.top - nHeight) / 2;
+        SetWindowPos(hDlg, NULL, x, y, nWidth, nHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+        HWND hCurrentEdit = GetDlgItem(hDlg, IDC_CURRENT_PASSWORD);
+        if (hCurrentEdit) {
+            SetFocus(hCurrentEdit);
+        }
+        currentPassword.clear();
+        newPassword.clear();
+        confirmPassword.clear();
+        return (INT_PTR)FALSE;
+    }
+
+    case WM_COMMAND:
+    {
+        int wmId = LOWORD(wParam);
+        switch (wmId)
+        {
+        case IDOK:
+        {
+            HWND hCurrentEdit = GetDlgItem(hDlg, IDC_CURRENT_PASSWORD);
+            HWND hNewEdit = GetDlgItem(hDlg, IDC_NEW_PASSWORD);
+            HWND hConfirmEdit = GetDlgItem(hDlg, IDC_CONFIRM_PASSWORD);
+            WCHAR buffer[256];
+
+            GetWindowTextW(hCurrentEdit, buffer, ARRAYSIZE(buffer));
+            currentPassword = buffer;
+            GetWindowTextW(hNewEdit, buffer, ARRAYSIZE(buffer));
+            newPassword = buffer;
+            GetWindowTextW(hConfirmEdit, buffer, ARRAYSIZE(buffer));
+            confirmPassword = buffer;
+            SecureZeroMemory(buffer, sizeof(buffer));
+
+            currentPassword.erase(0, currentPassword.find_first_not_of(L" \t\n\r"));
+            currentPassword.erase(currentPassword.find_last_not_of(L" \t\n\r") + 1);
+            newPassword.erase(0, newPassword.find_first_not_of(L" \t\n\r"));
+            newPassword.erase(newPassword.find_last_not_of(L" \t\n\r") + 1);
+            confirmPassword.erase(0, confirmPassword.find_first_not_of(L" \t\n\r"));
+            confirmPassword.erase(confirmPassword.find_last_not_of(L" \t\n\r") + 1);
+
+            if (currentPassword.empty() || newPassword.empty() || confirmPassword.empty()) {
+                MessageBoxW(hDlg, L"All fields are required.", L"Error", MB_OK | MB_ICONERROR);
+                return (INT_PTR)TRUE;
+            }
+
+            if (!IsValidInput(newPassword)) {
+                MessageBoxW(hDlg, L"New password contains invalid characters (<, >, &, \", ').", L"Error", MB_OK | MB_ICONERROR);
+                return (INT_PTR)TRUE;
+            }
+
+            if (newPassword != confirmPassword) {
+                MessageBoxW(hDlg, L"New password and confirmation do not match.", L"Error", MB_OK | MB_ICONERROR);
+                return (INT_PTR)TRUE;
+            }
+
+            if (ChangeMasterPassword(hDlg, currentPassword, newPassword)) {
+                EndDialog(hDlg, IDOK);
+            }
+            return (INT_PTR)TRUE;
+        }
+        case IDCANCEL:
+        {
+            currentPassword.clear();
+            newPassword.clear();
+            confirmPassword.clear();
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        }
+        break;
+    }
+
+    case WM_CTLCOLORDLG:
+        if (isDarkTheme) {
+            return (INT_PTR)hDarkGreyBrush; // Cast to INT_PTR
+        }
+        break;
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdcStatic = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcStatic, textColor);
+            SetBkMode(hdcStatic, TRANSPARENT);
+            return (INT_PTR)hDarkGreyBrush; // Cast to INT_PTR
+        }
+        break;
+    }
+
+    case WM_CTLCOLOREDIT:
+    {
+        HDC hdcEdit = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcEdit, textColor);
+            SetBkMode(hdcEdit, TRANSPARENT);
+            return (INT_PTR)(hEditBrush ? hEditBrush : hDarkGreyBrush); // Cast to INT_PTR
+        }
+        break;
+    }
+
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdcButton = (HDC)wParam;
+        if (isDarkTheme) {
+            SetTextColor(hdcButton, textColor);
+            SetBkMode(hdcButton, TRANSPARENT);
+            return (INT_PTR)hDarkGreyBrush; // Cast to INT_PTR
+        }
+        break;
+    }
+
+    case WM_DESTROY:
+    {
+        if (hEditBrush) {
+            DeleteObject(hEditBrush);
+            hEditBrush = NULL;
+        }
+        currentPassword.clear();
+        newPassword.clear();
+        confirmPassword.clear();
+        break;
+    }
+    }
+    return (INT_PTR)FALSE;
+}
 
  

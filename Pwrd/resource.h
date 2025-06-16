@@ -35,6 +35,12 @@
 #define IDC_UPDATE_BUTTON 1024
 #define IDC_AutoBtn2 7656
 
+#define IDC_CHANGE_PASSWORD 7657 
+#define IDD_CHANGE_PASSWORD 7658
+#define IDC_CURRENT_PASSWORD            7659
+#define IDC_NEW_PASSWORD                7660
+#define IDC_CONFIRM_PASSWORD            7661
+
 
 
 

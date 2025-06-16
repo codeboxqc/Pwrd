@@ -410,6 +410,9 @@ bool EncryptFile(const std::wstring& source, const std::wstring& destination, co
         std::ifstream inFile(source, std::ios::binary);
         if (!inFile.is_open()) return false;
 
+        BCRYPT_ALG_HANDLE hAlg = nullptr;
+        BCRYPT_KEY_HANDLE hKey = nullptr;
+
         std::vector<BYTE> plaintext((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
         inFile.close();
 

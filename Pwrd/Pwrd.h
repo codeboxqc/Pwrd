@@ -13,7 +13,7 @@ struct PasswordEntry {
     std::wstring password;
      std::wstring note;
     
-    COLORREF color;
+     COLORREF color  ;
     std::wstring category; // Added for category support
     std::wstring creationDate;
 };
