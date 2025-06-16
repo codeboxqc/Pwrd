@@ -37,6 +37,7 @@
 #include <bcrypt.h> 
 #include "tinyxml2.h"
 #include <tlhelp32.h> // Include this header for TH32CS_SNAPPROCESS and CreateToolhelp32Snapshot
+#include <memory> // Added for std::unique_ptr
 
 #include <wintrust.h>
 #include <softpub.h>
@@ -94,7 +95,7 @@ HBRUSH hDarkGreyBrush = nullptr;
 HBRUSH butBrush = nullptr;
 
 ////////////////////
-std::vector<PasswordEntry> entries;
+std::unique_ptr<std::vector<PasswordEntry>> g_entries;
 
  
 
@@ -259,7 +260,9 @@ void ClearSensitiveDataAndUI(HWND hWnd, bool preserveListView = false) {
         g_userKeyForXml.shrink_to_fit();
     }
 
-    entries.clear();
+    if (g_entries) {
+        g_entries->clear();
+    }
     
     g_isPinValidated = false;
     g_pin_attempts = 0;
@@ -515,6 +518,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 {
+    g_entries = std::make_unique<std::vector<PasswordEntry>>();
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
@@ -693,7 +697,7 @@ void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
  
 
 void ApplyEntryChanges(HWND hWnd, int entryIndex) {
-    if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
+    if (!g_entries || entryIndex < 0 || static_cast<size_t>(entryIndex) >= g_entries->size()) {
         return;
     }
 
@@ -718,9 +722,9 @@ void ApplyEntryChanges(HWND hWnd, int entryIndex) {
     updatedEntry.note = getWindowTextDynamic(hNote); // \r\n preserved
     updatedEntry.category = getWindowTextDynamic(hCategory);
     updatedEntry.color = currentColor;
-    updatedEntry.creationDate = entries[entryIndex].creationDate;
+    updatedEntry.creationDate = (*g_entries)[entryIndex].creationDate;
 
-    entries[entryIndex] = updatedEntry;
+    (*g_entries)[entryIndex] = updatedEntry;
     g_lastSelectedEntryIndex = entryIndex;
 
     SaveXML();
@@ -767,8 +771,8 @@ void UpdatePasswordStrength(HWND hWnd, HWND hPasswordEdit) {
     // Get creation date for selected entry
     std::wstring creationDate = L"N/A";
     int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
-    if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
-        creationDate = entries[idx].creationDate.empty() ? L"N/A" : entries[idx].creationDate;
+    if (g_entries && idx >= 0 && static_cast<size_t>(idx) < g_entries->size()) {
+        creationDate = (*g_entries)[idx].creationDate.empty() ? L"N/A" : (*g_entries)[idx].creationDate;
     }
 
     // Combine strength and creation date
@@ -1411,10 +1415,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 if (pnmv->uNewState & LVIS_SELECTED)
                 {
                     int idx = pnmv->iItem;
-                    if (idx >= 0 && static_cast<size_t>(idx) < entries.size())
+                    if (g_entries && idx >= 0 && static_cast<size_t>(idx) < g_entries->size())
                     {
                         if (g_dataModifiedInFields && g_lastSelectedEntryIndex != -1 &&
-                            static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size() &&
+                            static_cast<size_t>(g_lastSelectedEntryIndex) < g_entries->size() &&
                             !g_isInsideApplyChanges)
                         {
                             g_isInsideApplyChanges = true;
@@ -1422,21 +1426,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                             g_isInsideApplyChanges = false;
                         }
 
-                        std::wstring note = entries[idx].note;
+                        std::wstring note = (*g_entries)[idx].note;
                          NormalizeLineEndings(note); // Ensure \r\n for display
 
-                        SetWindowTextW(hName, entries[idx].name.c_str());
-                        SetWindowTextW(hWebsite, entries[idx].website.c_str());
-                        SetWindowTextW(hEmail, entries[idx].email.c_str());
-                        SetWindowTextW(hUser, entries[idx].user.c_str());
-                        SetWindowTextW(hPassword, entries[idx].password.c_str());
+                        SetWindowTextW(hName, (*g_entries)[idx].name.c_str());
+                        SetWindowTextW(hWebsite, (*g_entries)[idx].website.c_str());
+                        SetWindowTextW(hEmail, (*g_entries)[idx].email.c_str());
+                        SetWindowTextW(hUser, (*g_entries)[idx].user.c_str());
+                        SetWindowTextW(hPassword, (*g_entries)[idx].password.c_str());
 
                         SetWindowTextW(hNote, note.c_str());
                         InvalidateRect(hNote, NULL, TRUE); // Force redraw
                         UpdateWindow(hNote); // Ensure immediate update
-                        SetWindowTextW(hCategory, entries[idx].category.c_str());
+                        SetWindowTextW(hCategory, (*g_entries)[idx].category.c_str());
 
-                        currentColor = entries[idx].color;
+                        currentColor = (*g_entries)[idx].color;
                         g_lastSelectedEntryIndex = idx;
                         g_dataModifiedInFields = false;
                         UpdatePasswordStrength(hWnd, hPassword);
@@ -1457,9 +1461,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     lvi.mask = LVIF_PARAM;
                     ListView_GetItem(hListView, &lvi);
                     size_t idx = (size_t)lvi.lParam;
-                    if (idx < entries.size())
+                    if (g_entries && idx < g_entries->size())
                     {
-                        lplvcd->clrText = entries[idx].color;
+                        lplvcd->clrText = (*g_entries)[idx].color;
                     }
                     lplvcd->clrTextBk = dark;
                     return CDRF_DODEFAULT;
@@ -1686,17 +1690,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (wmEvent == CBN_SELCHANGE)
             {
                 int sel = SendMessage(hSortCombo, CB_GETCURSEL, 0, 0);
-                if (sel == 0) { // Sort by Name
-                    std::sort(entries.begin(), entries.end(), [](const PasswordEntry& a, const PasswordEntry& b) {
-                        return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
-                        });
+                if (g_entries) {
+                    if (sel == 0) { // Sort by Name
+                        std::sort(g_entries->begin(), g_entries->end(), [](const PasswordEntry& a, const PasswordEntry& b) {
+                            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+                            });
+                    }
+                    else if (sel == 1) { // Sort by Category
+                        std::sort(g_entries->begin(), g_entries->end(), [](const PasswordEntry& a, const PasswordEntry& b) {
+                            return _wcsicmp(a.category.c_str(), b.category.c_str()) < 0;
+                            });
+                    }
+                    PopulateListView();
                 }
-                else if (sel == 1) { // Sort by Category
-                    std::sort(entries.begin(), entries.end(), [](const PasswordEntry& a, const PasswordEntry& b) {
-                        return _wcsicmp(a.category.c_str(), b.category.c_str()) < 0;
-                        });
-                }
-                PopulateListView();
             }
             break;
         case IDC_XBtn:
@@ -1797,15 +1803,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             if (!entry.name.empty()) {
                 bool exists = false;
-                for (const auto& e : entries) {
-                    if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
-                        exists = true;
-                        MessageBoxW(hWnd, L"An entry with this name already exists. Please use a unique name or update the existing entry.", L"Error", MB_OK | MB_ICONWARNING);
-                        break;
+                if (g_entries) {
+                    for (const auto& e : *g_entries) {
+                        if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
+                            exists = true;
+                            MessageBoxW(hWnd, L"An entry with this name already exists. Please use a unique name or update the existing entry.", L"Error", MB_OK | MB_ICONWARNING);
+                            break;
+                        }
                     }
                 }
                 if (!exists) {
-                    entries.push_back(entry);
+                    if (!g_entries) {
+                        g_entries = std::make_unique<std::vector<PasswordEntry>>();
+                    }
+                    g_entries->push_back(entry);
                     SaveXML();
                     PopulateListView();
                     SetWindowTextW(hName, L"");
@@ -1829,7 +1840,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         case IDC_UPDATE_BUTTON:
         {
-            if (g_lastSelectedEntryIndex != -1 && static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size()) {
+            if (g_entries && g_lastSelectedEntryIndex != -1 && static_cast<size_t>(g_lastSelectedEntryIndex) < g_entries->size()) {
                 g_isInsideApplyChanges = true;
                 ApplyEntryChanges(hWnd, g_lastSelectedEntryIndex);
                 g_isInsideApplyChanges = false;
@@ -1839,11 +1850,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_DELETE:
         {
             int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
-            if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
+            if (g_entries && idx >= 0 && static_cast<size_t>(idx) < g_entries->size()) {
                 WCHAR message[256];
-                swprintf_s(message, L"Are you sure you want to delete the entry '%s'?", entries[idx].name.c_str());
+                swprintf_s(message, L"Are you sure you want to delete the entry '%s'?", (*g_entries)[idx].name.c_str());
                 if (MessageBoxW(hWnd, message, L"Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                    entries.erase(entries.begin() + idx);
+                    g_entries->erase(g_entries->begin() + idx);
                     SaveXML();
                     PopulateListView();
                     SetWindowTextW(hName, L"");
@@ -1872,14 +1883,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             GetWindowTextW(hSearchEdit, searchText, 256);
             std::wstring search = searchText;
             ListView_DeleteAllItems(hListView);
-            if (entries.size() > INT_MAX) {
+            if (g_entries && g_entries->size() > INT_MAX) {
                 MessageBoxW(hWnd, L"Too many entries for ListView.", L"Error", MB_OK | MB_ICONERROR);
                 return 0;
             }
-            for (size_t i = 0; i < entries.size(); ++i) {
-                const PasswordEntry& e = entries[i];
-                LVITEMW lvi = { 0 };
-                lvi.mask = LVIF_TEXT | LVIF_PARAM;
+            if (g_entries) {
+                for (size_t i = 0; i < g_entries->size(); ++i) {
+                    const PasswordEntry& e = (*g_entries)[i];
+                    LVITEMW lvi = { 0 };
+                    lvi.mask = LVIF_TEXT | LVIF_PARAM;
                 lvi.iItem = static_cast<int>(i);
                 if (search.empty() ||
                     e.name.find(search) != std::wstring::npos ||
@@ -1908,14 +1920,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_reset:
         {
             ListView_DeleteAllItems(hListView);
-            if (entries.size() > INT_MAX) {
+            if (g_entries && g_entries->size() > INT_MAX) {
                 MessageBoxW(hWnd, L"Too many entries for ListView.", L"Error", MB_OK | MB_ICONERROR);
                 return 0;
             }
-            for (size_t i = 0; i < entries.size(); ++i) {
-                const PasswordEntry& e = entries[i];
-                LVITEMW lvi = { 0 };
-                lvi.mask = LVIF_TEXT | LVIF_PARAM;
+            if (g_entries) {
+                for (size_t i = 0; i < g_entries->size(); ++i) {
+                    const PasswordEntry& e = (*g_entries)[i];
+                    LVITEMW lvi = { 0 };
+                    lvi.mask = LVIF_TEXT | LVIF_PARAM;
                 lvi.iItem = static_cast<int>(i);
                 lvi.pszText = const_cast<LPWSTR>(e.name.c_str());
                 lvi.lParam = (LPARAM)i;
@@ -1990,8 +2003,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (ChooseColor(&cc)) {
                 currentColor = cc.rgbResult;
                 int idx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
-                if (idx >= 0 && static_cast<size_t>(idx) < entries.size()) {
-                    entries[idx].color = currentColor; // Update the color for the selected entry
+                if (g_entries && idx >= 0 && static_cast<size_t>(idx) < g_entries->size()) {
+                    (*g_entries)[idx].color = currentColor; // Update the color for the selected entry
 
                     UpdateListViewColors(); // Refresh ListView to show new color
                     InvalidateRect(hListView, nullptr, TRUE); // Force ListView redraw
@@ -2011,9 +2024,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             lvi.mask = LVIF_PARAM;
             ListView_GetItem(hListView, &lvi);
             size_t idx = (size_t)lvi.lParam;
-            if (idx < entries.size())
+            if (g_entries && idx < g_entries->size())
             {
-                lplvcd->clrText = entries[idx].color; // Uses individual entry color
+                lplvcd->clrText = (*g_entries)[idx].color; // Uses individual entry color
             }
             lplvcd->clrTextBk = dark;
             return CDRF_DODEFAULT;
@@ -2122,14 +2135,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (GetFocus() == hListView)
             {
                 int currIdx = ListView_GetNextItem(hListView, -1, LVNI_SELECTED);
-                if (currIdx == -1 && entries.size() > 0)
+                if (g_entries && currIdx == -1 && g_entries->size() > 0)
                 {
                     currIdx = 0;
                 }
                 else if (currIdx >= 0)
                 {
-                    if (g_dataModifiedInFields && g_lastSelectedEntryIndex != -1 &&
-                        static_cast<size_t>(g_lastSelectedEntryIndex) < entries.size() &&
+                    if (g_entries && g_dataModifiedInFields && g_lastSelectedEntryIndex != -1 &&
+                        static_cast<size_t>(g_lastSelectedEntryIndex) < g_entries->size() &&
                         !g_isInsideApplyChanges)
                     {
                         g_isInsideApplyChanges = true;
@@ -2143,24 +2156,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 {
                     newIdx = currIdx - 1;
                 }
-                else if (wParam == VK_DOWN && currIdx < static_cast<int>(entries.size()) - 1)
+                else if (g_entries && wParam == VK_DOWN && currIdx < static_cast<int>(g_entries->size()) - 1)
                 {
                     newIdx = currIdx + 1;
                 }
 
-                if (newIdx >= 0 && static_cast<size_t>(newIdx) < entries.size())
+                if (g_entries && newIdx >= 0 && static_cast<size_t>(newIdx) < g_entries->size())
                 {
                     ListView_SetItemState(hListView, currIdx, 0, LVIS_SELECTED | LVIS_FOCUSED);
                     ListView_SetItemState(hListView, newIdx, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
                     ListView_EnsureVisible(hListView, newIdx, FALSE);
-                    SetWindowTextW(hName, entries[newIdx].name.c_str());
-                    SetWindowTextW(hWebsite, entries[newIdx].website.c_str());
-                    SetWindowTextW(hEmail, entries[newIdx].email.c_str());
-                    SetWindowTextW(hUser, entries[newIdx].user.c_str());
-                    SetWindowTextW(hPassword, entries[newIdx].password.c_str());
-                    SetWindowTextW(hNote, entries[newIdx].note.c_str());
-                    SetWindowTextW(hCategory, entries[newIdx].category.c_str());
-                    currentColor = entries[newIdx].color;
+                    SetWindowTextW(hName, (*g_entries)[newIdx].name.c_str());
+                    SetWindowTextW(hWebsite, (*g_entries)[newIdx].website.c_str());
+                    SetWindowTextW(hEmail, (*g_entries)[newIdx].email.c_str());
+                    SetWindowTextW(hUser, (*g_entries)[newIdx].user.c_str());
+                    SetWindowTextW(hPassword, (*g_entries)[newIdx].password.c_str());
+                    SetWindowTextW(hNote, (*g_entries)[newIdx].note.c_str());
+                    SetWindowTextW(hCategory, (*g_entries)[newIdx].category.c_str());
+                    currentColor = (*g_entries)[newIdx].color;
                     g_lastSelectedEntryIndex = newIdx;
                     g_dataModifiedInFields = false;
                     UpdatePasswordStrength(hWnd, hPassword);
@@ -2211,25 +2224,30 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             entry.color = currentColor;
             bool updated = false;
             bool exists = false;
-            for (auto& e : entries) {
-                if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
-                    exists = true;
-                    if (e.website != entry.website ||
-                        e.email != entry.email ||
-                        e.user != entry.user ||
-                        e.password != entry.password ||
-                        e.note != entry.note ||
-                        e.category != entry.category ||
-                        e.color != entry.color)
-                    {
-                        e = entry;
-                        updated = true;
+            if (g_entries) {
+                for (auto& e : *g_entries) {
+                    if (_wcsicmp(e.name.c_str(), entry.name.c_str()) == 0) {
+                        exists = true;
+                        if (e.website != entry.website ||
+                            e.email != entry.email ||
+                            e.user != entry.user ||
+                            e.password != entry.password ||
+                            e.note != entry.note ||
+                            e.category != entry.category ||
+                            e.color != entry.color)
+                        {
+                            e = entry;
+                            updated = true;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
             if (!exists) {
-                entries.push_back(entry);
+                if (!g_entries) {
+                    g_entries = std::make_unique<std::vector<PasswordEntry>>();
+                }
+                g_entries->push_back(entry);
                 updated = true;
             }
             if (updated) {
@@ -2356,7 +2374,9 @@ bool LoadXML(std::wstring xmlPath)
         if (doc.SaveFile(xmlPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
             return false;
         }
-        entries.clear();
+        if (g_entries) {
+            g_entries->clear();
+        }
         return true;
     }
      
@@ -2394,8 +2414,12 @@ bool LoadXML(std::wstring xmlPath)
             return false;
         }
 
-        entries.clear();
-        //entries.reserve(100);
+        if (!g_entries) {
+            g_entries = std::make_unique<std::vector<PasswordEntry>>();
+        } else {
+            g_entries->clear();
+        }
+        //g_entries->reserve(100);
 
         // Parse XML and populate entries
         tinyxml2::XMLElement* root = doc.FirstChildElement("Passwords");
@@ -2447,7 +2471,7 @@ bool LoadXML(std::wstring xmlPath)
             }
             const char* creationDate = entryElement->Attribute("creationDate");
             entry.creationDate = creationDate ? Utf8ToWstring(creationDate) : L"";
-            entries.push_back(entry);
+            g_entries->push_back(entry);
         }
 
         // Clean up
@@ -2455,7 +2479,7 @@ bool LoadXML(std::wstring xmlPath)
         SecureDeleteFile(tempPath.c_str());
         SecureZeroMemory(tempKey.data(), tempKey.size());
         tempKey.clear();
-        swprintf_s(debugMsg, L"Loaded %zu entries from XML.", entries.size());
+        swprintf_s(debugMsg, L"Loaded %zu entries from XML.", g_entries->size());
         PopulateListView();
         return true;
     }
@@ -2523,10 +2547,11 @@ void SaveXML()
     tinyxml2::XMLElement* root = doc.NewElement("Passwords");
     doc.InsertEndChild(root);
 
-    for (const auto& entry : entries) {
-        tinyxml2::XMLElement* entryElement = doc.NewElement("Entry");
+    if (g_entries) {
+        for (const auto& entry : *g_entries) {
+            tinyxml2::XMLElement* entryElement = doc.NewElement("Entry");
 
-        auto createTextElement = [&](const char* elementName, std::wstring text) {
+            auto createTextElement = [&](const char* elementName, std::wstring text) {
             NormalizeLineEndings(text); // Ensure \r\n before saving
             tinyxml2::XMLElement* elem = doc.NewElement(elementName);
             std::string utf8Text = WstringToUtf8(text);
@@ -2674,13 +2699,15 @@ void UpdateListViewColors() {
 
 void PopulateListView() {
     ListView_DeleteAllItems(hListView);
-    for (size_t i = 0; i < entries.size(); ++i) {
-        LVITEMW lvi = { 0 };
-        lvi.mask = LVIF_TEXT | LVIF_PARAM; // Add LVIF_PARAM
-        lvi.iItem = (int)i;
-        lvi.pszText = (LPWSTR)entries[i].name.c_str();
-        lvi.lParam = (LPARAM)i; // Set index as lParam
-        ListView_InsertItem(hListView, &lvi);
+    if (g_entries) {
+        for (size_t i = 0; i < g_entries->size(); ++i) {
+            LVITEMW lvi = { 0 };
+            lvi.mask = LVIF_TEXT | LVIF_PARAM; // Add LVIF_PARAM
+            lvi.iItem = (int)i;
+            lvi.pszText = (LPWSTR)(*g_entries)[i].name.c_str();
+            lvi.lParam = (LPARAM)i; // Set index as lParam
+            ListView_InsertItem(hListView, &lvi);
+        }
     }
 }
 
