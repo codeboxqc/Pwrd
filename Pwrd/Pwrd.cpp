@@ -8,9 +8,9 @@
 #define _WIN32_WINNT _WIN32_WINNT_WIN10
 
 
- 
+
  // Define the missing constant for vertical foreground color
- 
+
 
 
 #include "pch.h"
@@ -96,7 +96,10 @@ HBRUSH butBrush = nullptr;
 ////////////////////
 std::vector<PasswordEntry> entries;
 
- 
+//struct WindowData {
+//    std::vector<PasswordEntry> entries;
+ //   int lastSelectedIndex = -1;
+///////////////////////////
 
 
 static int g_lastSelectedEntryIndex = -1;
@@ -178,6 +181,12 @@ bool NtQueryDebugFlag();
 bool CheckForBreakpointsInCode();
 bool VerifyExecutableIntegrity();
 
+// File handles for locking
+static HANDLE hDataXmlLock = INVALID_HANDLE_VALUE;
+static HANDLE hPasswordPgpLock = INVALID_HANDLE_VALUE;
+void UnlockFiles();
+bool LockFiles();
+
 bool mili = 0;
 
 void CopyToClipboard(HWND hWnd, const std::wstring& text);
@@ -201,7 +210,10 @@ net start cryptsvc
 sfc /scannow
 */
 
- 
+//std::vector<PasswordEntry> entries;
+//bool LoadXML(std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
+//bool SaveXML(const std::vector<PasswordEntry>& entries, const std::wstring& filePath, const std::vector<BYTE>& key);
+
 void PopulateListView();
 
 void UpdateListViewColors();
@@ -260,7 +272,7 @@ void ClearSensitiveDataAndUI(HWND hWnd, bool preserveListView = false) {
     }
 
     entries.clear();
-    
+
     g_isPinValidated = false;
     g_pin_attempts = 0;
     if (hName) SetWindowTextW(hName, L"");
@@ -289,7 +301,7 @@ void Transparent(HWND hWnd, int alpha) {
     SetLayeredWindowAttributes(hWnd, RGB(0, 0, 0), (BYTE)alpha, LWA_ALPHA);
 }
 
- 
+
 
 // Optional: Military grade password with predefined settings
 void GenerateMilitaryGradePassword(HWND hEdit, size_t length = 32) {
@@ -483,7 +495,7 @@ void GenerateSecurePassword(HWND hEdit,
 
 
 
- 
+
 
 // Function to retrieve the text from a window handle dynamically
 std::wstring getWindowTextDynamic(HWND hWnd) {
@@ -532,23 +544,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 
-     //   if(IsVMCPU()==1) return FALSE;
+    //   if(IsVMCPU()==1) return FALSE;
 
-     if (IsDebuggerAttached() == true) return FALSE;
+    if (IsDebuggerAttached() == true) return FALSE;
 
-        if (IsRunningInVM() == true) return FALSE;
+    if (IsRunningInVM() == true) return FALSE;
 
-      if (IsBeingDebugged() == true) return FALSE;  
+    if (IsBeingDebugged() == true) return FALSE;
 
-      if (OutputDebugStringCheck() == true) return FALSE;
+    if (OutputDebugStringCheck() == true) return FALSE;
 
-        if (NtQueryDebugFlag() == true) return FALSE;
+    if (NtQueryDebugFlag() == true) return FALSE;
 
-       
-   
 
-   /////////////////////////////////////////////////////
-       // Create a named mutex to check for existing instance
+
+
+    /////////////////////////////////////////////////////
+        // Create a named mutex to check for existing instance
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Pwrd");
     if (hMutex == nullptr || GetLastError() == ERROR_ALREADY_EXISTS) {
         // Another instance is already running
@@ -634,7 +646,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         100, 100, 800, 600, HWND_DESKTOP, nullptr, hInstance, nullptr
     );
 
-
+    LockFiles();
     ////////////////////////////////
     ShowWindow(hWnd, SW_HIDE);
 
@@ -690,7 +702,7 @@ void AddTooltip(HWND hTooltip, HWND hWnd, HWND hControl, LPCWSTR text)
     SendMessageW(hTooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
- 
+
 
 void ApplyEntryChanges(HWND hWnd, int entryIndex) {
     if (entryIndex < 0 || static_cast<size_t>(entryIndex) >= entries.size()) {
@@ -791,7 +803,7 @@ void ini(HWND hWnd)
     animationChars = getRandomAnimationSet();
 
 
-    
+
     /*
     NONCLIENTMETRICS ncm = { sizeof(ncm) };
 SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
@@ -799,16 +811,16 @@ SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIF
 */
 
     hListView = CreateWindowEx(0, WC_LISTVIEW, L"",
-        
+
         WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | WS_VSCROLL,
         10, 10, 200, 580, hWnd, (HMENU)IDC_LISTVIEW, hInst, nullptr);
 
 
-    
+
     // Set scrollbar width system-wide
     NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
 
-    
+
 
     int thinWidth = 10; // desired width
     int originalWidth = GetSystemMetrics(SM_CXVSCROLL); // Default vertical scrollbar width
@@ -823,7 +835,7 @@ SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIF
     FlatSB_SetScrollProp(hListView, WSB_PROP_CXVSCROLL, thinWidth, TRUE);
     // Optional: Match dark theme (approximate colors)
     FlatSB_SetScrollProp(hListView, WSB_PROP_VBKGCOLOR, dark, FALSE); // Background
-    #define WSB_PROP_VFGCOLOR 0x00000009
+#define WSB_PROP_VFGCOLOR 0x00000009
     FlatSB_SetScrollProp(hListView, WSB_PROP_VFGCOLOR, textColor, FALSE); // Thumb
 
     ///*
@@ -839,7 +851,7 @@ SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIF
     lvc.pszText = (LPWSTR)L"";
     ListView_InsertColumn(hListView, 0, &lvc);
     ListView_SetExtendedListViewStyle(hListView, LVS_EX_FULLROWSELECT);
-     ShowScrollBar(hListView, SB_VERT, TRUE);
+    ShowScrollBar(hListView, SB_VERT, TRUE);
 
     HWND hHeader = ListView_GetHeader(hListView);
     ListView_SetBkColor(hListView, dark);
@@ -932,11 +944,11 @@ SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIF
     ShowScrollBar(hNote, SB_HORZ, FALSE);
     SendMessage(hNote, EM_LIMITTEXT, 32768, 0); // Set 32KB limit
 
-      
-     LONG_PTR noteStyle = 0;
-     noteStyle = GetWindowLongPtr(hNote, GWL_STYLE);
-     SetWindowLongPtr(hNote, GWL_STYLE, noteStyle | ES_MULTILINE);
-      
+
+    LONG_PTR noteStyle = 0;
+    noteStyle = GetWindowLongPtr(hNote, GWL_STYLE);
+    SetWindowLongPtr(hNote, GWL_STYLE, noteStyle | ES_MULTILINE);
+
     g_hNoteFont = CreateFont(
         12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -1071,7 +1083,7 @@ SystemParametersInfo(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm, SPIF_UPDATEINIF
 
     // Font setup
    // NONCLIENTMETRICS
-        ncm = { sizeof(NONCLIENTMETRICS) };
+    ncm = { sizeof(NONCLIENTMETRICS) };
     SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
     ncm.lfMessageFont.lfHeight = 20;
     HFONT hFont = CreateFontIndirect(&ncm.lfMessageFont);
@@ -1154,8 +1166,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 
         if (!VerifyExecutableIntegrity()) {
-           // MessageBoxW(hWnd, L"Executable integrity verification failed.", L"Security Error", MB_OK | MB_ICONERROR);
-            //  return 0;
+            // MessageBoxW(hWnd, L"Executable integrity verification failed.", L"Security Error", MB_OK | MB_ICONERROR);
+             //  return 0;
         }
 
 
@@ -1164,7 +1176,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         SecureZeroMemory(pKey, 32);
         VirtualLock(pKey, keySize); // Prevent swapping to disk
 
-        
+
 
 
         hInstance_WndProc = ((LPCREATESTRUCT)lParam)->hInstance;
@@ -1248,7 +1260,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     break;
                 }
                 case IDM_EXIT:
-                    
+
                     SaveXML(); // Save to persist the color change
                     KillTrayIcon(); // Ensure tray icon is removed
                     DestroyWindow(hWnd);
@@ -1423,7 +1435,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                         }
 
                         std::wstring note = entries[idx].note;
-                         NormalizeLineEndings(note); // Ensure \r\n for display
+                        NormalizeLineEndings(note); // Ensure \r\n for display
 
                         SetWindowTextW(hName, entries[idx].name.c_str());
                         SetWindowTextW(hWebsite, entries[idx].website.c_str());
@@ -1718,9 +1730,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             SendMessage(hWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             break;
 
-         
 
-            
+
+
         case IDC_AutoBtn2:
             if (mili == 0) mili = 1;
             else mili = 0;
@@ -1734,9 +1746,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             g_dataModifiedInFields = true;
             UpdatePasswordStrength(hWnd, hPassword);
-              
 
-            break; 
+
+            break;
 
             /*
         case IDC_TOGGLE_PASSWORD:
@@ -1924,7 +1936,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             UpdateListViewColors();
             hHeader = ListView_GetHeader(hListView);
             ShowWindow(hHeader, SW_HIDE);
-           // ShowScrollBar(hListView, SB_VERT, FALSE);
+            // ShowScrollBar(hListView, SB_VERT, FALSE);
             ShowScrollBar(hListView, SB_HORZ, FALSE);
             SetFocus(hWnd);
             break;
@@ -2060,8 +2072,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             GetWindowTextW(hNote, buffer, 8024);
             CopyToClipboard(hWnd, buffer);
 
-             
-            
+
+
 
             break;
         }
@@ -2251,7 +2263,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (ONE) KillTimer(hWnd, ONE);
         if (AUTO_LOCK_TIMER) KillTimer(hWnd, AUTO_LOCK_TIMER);
         if (hBigFont)  DeleteObject(hBigFont);
-        
+
         if (hBitmap)      DeleteObject(hBitmap);
         if (hCustomCursor)        DeleteObject(hCustomCursor);
         if (hDarkGreyBrush)        DeleteObject(hDarkGreyBrush);
@@ -2262,7 +2274,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_hNoteFont = nullptr;
         }
 
-  
+
         if (hTooltip)
         {
             DestroyWindow(hTooltip);
@@ -2270,6 +2282,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
 
         KillTrayIcon();
+        UnlockFiles();
         PostQuitMessage(0);
         return 0;
     }
@@ -2325,16 +2338,19 @@ tinyxml2::XMLDocument tiny;
 
 
 
- 
 
 
 
- 
+
+
 
 
 bool LoadXML(std::wstring xmlPath)
 {
     WCHAR debugMsg[512];
+
+    // Unlock files to allow reading
+    UnlockFiles();
 
     // Check if resto == 1 and xmlPath is data.xml, then reset resto to 0
     if (resto == 1 && xmlPath == GetFullFilePath(L"data.xml")) {
@@ -2359,7 +2375,7 @@ bool LoadXML(std::wstring xmlPath)
         entries.clear();
         return true;
     }
-     
+
     // Decrypt g_userKeyForXml
     std::vector<BYTE> tempKey = g_userKeyForXml; // Copy to avoid modifying original
     if (!tempKey.empty()) {
@@ -2395,7 +2411,6 @@ bool LoadXML(std::wstring xmlPath)
         }
 
         entries.clear();
-        //entries.reserve(100);
 
         // Parse XML and populate entries
         tinyxml2::XMLElement* root = doc.FirstChildElement("Passwords");
@@ -2457,12 +2472,16 @@ bool LoadXML(std::wstring xmlPath)
         tempKey.clear();
         swprintf_s(debugMsg, L"Loaded %zu entries from XML.", entries.size());
         PopulateListView();
+        LockFiles(); // Re-lock on error
         return true;
     }
     else {
         MessageBoxW(nullptr, L"Encryption key not available.", L"Error", MB_OK | MB_ICONERROR);
+        LockFiles(); // Re-lock on error
         return false;
     }
+
+
 }
 
 
@@ -2485,7 +2504,7 @@ bool SecureDeleteFile(const std::wstring& filePath) {
 
     CloseHandle(hFile);
     return DeleteFileW(filePath.c_str()) != 0;
-   
+
 }
 
 
@@ -2495,11 +2514,14 @@ void SaveXML()
         return; // Skip saving during backup restoration
     }
 
+    // Unlock files to allow writing
+    UnlockFiles();
+
     std::wstring xmlPath = GetFullFilePath(L"data.xml");
     std::wstring tempPath = GetFullFilePath(L"temp_plain.xml");
 
 
- 
+
 
     // Generate backup filename with current date
     SYSTEMTIME st;
@@ -2558,8 +2580,9 @@ void SaveXML()
     std::string tempPathUtf8 = WstringToUtf8(tempPath);
     if (doc.SaveFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
         MessageBoxW(nullptr, L"Failed to save temporary XML data. Data not saved.", L"Save Error", MB_OK | MB_ICONERROR);
-       // DeleteFileW(tempPath.c_str());
-          SecureDeleteFile(tempPath.c_str());
+        // DeleteFileW(tempPath.c_str());
+        SecureDeleteFile(tempPath.c_str());
+        LockFiles(); // Re-lock on error
         return;
     }
 
@@ -2573,6 +2596,7 @@ void SaveXML()
             SecureDeleteFile(tempPath.c_str());
             SecureZeroMemory(tempKey.data(), tempKey.size());
             tempKey.clear();
+            LockFiles(); // Re-lock on error
             return;
         }
 
@@ -2583,6 +2607,7 @@ void SaveXML()
             SecureDeleteFile(tempPath.c_str());
             SecureZeroMemory(tempKey.data(), tempKey.size());
             tempKey.clear();
+            LockFiles(); // Re-lock on error
             return;
         }
 
@@ -2591,15 +2616,17 @@ void SaveXML()
         tempKey.clear();
     }
     else {
-       // MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
-        //DeleteFileW(tempPath.c_str());
+        // MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
+         //DeleteFileW(tempPath.c_str());
         SecureDeleteFile(tempPath.c_str());
+        LockFiles(); // Re-lock on error
         return;
     }
 
     // Clean up temp plain file
     //DeleteFileW(tempPath.c_str());
     SecureDeleteFile(tempPath.c_str());
+    LockFiles(); // Re-lock on error
 }
 
 
@@ -2616,8 +2643,8 @@ VOID CALLBACK ClearClipboardTimerProc(HWND hWnd, UINT uMsg, UINT_PTR idEvent, DW
 }
 
 void CopyToClipboard(HWND hWnd, const std::wstring& text) {
-   
-    
+
+
     std::wofstream debugLog(GetFullFilePath(L"debug_clipboard.txt"), std::ios::app);
     if (debugLog.is_open()) {
         debugLog << L"--- Clipboard Copy ---\n";
@@ -2629,10 +2656,10 @@ void CopyToClipboard(HWND hWnd, const std::wstring& text) {
         debugLog << L"\n---\n";
         debugLog.close();
     }
-    
+
     if (OpenClipboard(hWnd)) {
         EmptyClipboard();
- 
+
 
         HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, (text.size() + 1) * sizeof(wchar_t));
         if (hMem) {
@@ -2822,13 +2849,14 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
 
 
 
- 
+
 
 int cEXIST(HWND hWnd)
 {
     std::wstring tempPassword = L"Password"; // Declare and initialize tempPassword
     SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
 
+    UnlockFiles();
     std::wstring pgpPath = GetFullFilePath(L"password.pgp");
     bool fileExists = PathFileExistsW(pgpPath.c_str());
 
@@ -2840,6 +2868,7 @@ int cEXIST(HWND hWnd)
 
         if (result == IDCANCEL)
         {
+            LockFiles();
             return 2;
         }
         else if (result == IDOK)
@@ -2888,6 +2917,7 @@ int cEXIST(HWND hWnd)
                             SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
                             g_userKeyForXml.clear();
                             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                            LockFiles();
                             return 0;
                         }
                     }
@@ -2907,6 +2937,7 @@ int cEXIST(HWND hWnd)
                             if (!LoadXML(GetFullFilePath(L"data.xml"))) {
                                 MessageBoxW(hWnd, L"Failed to initialize data file.", L"Error", MB_OK | MB_ICONERROR);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                LockFiles();
                                 return 0;
                             }
                         }
@@ -2914,12 +2945,14 @@ int cEXIST(HWND hWnd)
                             if (!LoadXML(GetFullFilePath(files.c_str()))) {
                                 MessageBoxW(hWnd, L"Failed to load specified file.", L"Error", MB_OK | MB_ICONERROR);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                LockFiles();
                                 return 0;
                             }
                         }
 
                         SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                         tempPassword.clear();
+                        LockFiles();
                         return 1;
                     }
                     else
@@ -2928,6 +2961,7 @@ int cEXIST(HWND hWnd)
                         SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
                         g_userKeyForXml.clear();
                         SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        LockFiles();
                         return 0;
                     }
                 }
@@ -2939,6 +2973,7 @@ int cEXIST(HWND hWnd)
                     SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
                     g_userKeyForXml.clear();
                     SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                    LockFiles();
                     return 0;
                 }
             }
@@ -2996,10 +3031,12 @@ int cEXIST(HWND hWnd)
                                 SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
                                 g_userKeyForXml.clear();
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                LockFiles();
                                 return 1; // Maintain existing behavior
                             }
                             SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                             tempPassword.clear();
+                            LockFiles();
                             return 1;
                         }
                         else
@@ -3010,6 +3047,7 @@ int cEXIST(HWND hWnd)
                                 MessageBoxW(hWnd, L"Too many incorrect attempts. Application will exit.", L"Error", MB_OK | MB_ICONERROR);
                                 ClearSensitiveDataAndUI(hWnd);
                                 SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                                LockFiles();
                                 return 0;
                             }
                             MessageBoxW(hWnd, L"Password is incorrect. Please try again.", L"Error", MB_OK | MB_ICONERROR);
@@ -3025,6 +3063,7 @@ int cEXIST(HWND hWnd)
                         SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
                         g_userKeyForXml.clear();
                         SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                        LockFiles();
                         return 0;
                     }
                 }
@@ -3032,6 +3071,7 @@ int cEXIST(HWND hWnd)
                 {
                     MessageBoxW(hWnd, L"Failed to read password file.", L"Error", MB_OK | MB_ICONERROR);
                     SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
+                    LockFiles();
                     return 0;
                 }
             }
@@ -3180,7 +3220,7 @@ bool IsDebuggerAttached() {
 
 // Check for popular VM processes
 bool IsRunningInVM() {
-     
+
 
     const wchar_t* guestOnlyProcs[] = {
         L"vmtoolsd.exe",
@@ -3260,7 +3300,7 @@ bool NtQueryDebugFlag()
     if (!NtQIP)
         return false;
 
-    PROCESS_BASIC_INFORMATION pbi{};  
+    PROCESS_BASIC_INFORMATION pbi{};
     if (NtQIP(GetCurrentProcess(),
         ProcessBasicInformation,
         &pbi, sizeof pbi, nullptr) != 0)
@@ -3480,15 +3520,15 @@ bool VerifyExecutableIntegrity()
 
     // First: Verify Authenticode signature
     if (!VerifyAuthenticode(exePath)) {
-        
-        
-      // return false; //no cert found
+
+
+        // return false; //no cert found
     }
 
     // Fallback: Verify SHA-256 hash
     std::vector<BYTE> computedHash;
     if (!ComputeFileHash(exePath, computedHash)) {
-      //  return false; // Failed to compute hash
+        //  return false; // Failed to compute hash
     }
 
     // Read expected hash from hash.256
@@ -3504,18 +3544,25 @@ bool VerifyExecutableIntegrity()
 //signtool sign /f your_certificate.pfx /p password /t http://timestamp.digicert.com pwrd.exe
 ////use  Get-FileHash -Path .\pwrd.exe -Algorithm SHA256
 
- 
+
 
 std::vector<BYTE> tempKey;
 
- // Function to change the master password
+// Function to change the master password
 bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const std::wstring& newPassword) {
+
+
+    // Unlock files to allow access
+    UnlockFiles();
+
+
     std::wstring pgpPath = GetFullFilePath(L"password.pgp");
 
     // Verify current password
     std::ifstream inFile(pgpPath, std::ios::binary);
     if (!inFile.is_open()) {
         MessageBoxW(hWnd, L"Password file not found.", L"Error", MB_OK | MB_ICONERROR);
+        LockFiles(); // Re-lock on error
         return false;
     }
 
@@ -3523,6 +3570,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
     inFile.close();
     if (fileData.size() < SALT_LENGTH + KEY_LENGTH) {
         MessageBoxW(hWnd, L"Corrupted password file.", L"Error", MB_OK | MB_ICONERROR);
+        LockFiles(); // Re-lock on error
         return false;
     }
 
@@ -3533,6 +3581,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
         std::vector<BYTE> enteredKey = GenerateKeyFromPassword(currentPassword, storedSalt);
         if (enteredKey != storedKey) {
             MessageBoxW(hWnd, L"Incorrect current password.", L"Error", MB_OK | MB_ICONERROR);
+            LockFiles(); // Re-lock on error
             return false;
         }
 
@@ -3550,6 +3599,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
             if (!CryptProtectMemory(newKeyCopy.data(), cbData, CRYPTPROTECTMEMORY_SAME_PROCESS)) {
                 MessageBoxW(hWnd, L"Failed to encrypt new key in memory.", L"Error", MB_OK | MB_ICONERROR);
                 SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
+                LockFiles(); // Re-lock on error
                 return false;
             }
         }
@@ -3559,6 +3609,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
 
         // Save all entries to data.xml with new key
         SaveXML(); // Assumes SaveXML uses g_userKeyForXml to encrypt data.xml
+        UnlockFiles();
 
         // Update password.pgp with new key and salt
         std::ofstream outFile(pgpPath, std::ios::binary);
@@ -3566,6 +3617,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
             MessageBoxW(hWnd, L"Failed to update password file.", L"Error", MB_OK | MB_ICONERROR);
             SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
             g_userKeyForXml.clear();
+            LockFiles(); // Re-lock on error
             return false;
         }
         outFile.write(reinterpret_cast<const char*>(newSalt.data()), newSalt.size());
@@ -3580,6 +3632,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
         SecureZeroMemory(newKeyCopy.data(), newKeyCopy.size());
 
         MessageBoxW(hWnd, L"Password changed successfully.", L"Success", MB_OK | MB_ICONINFORMATION);
+        LockFiles(); // Re-lock on error
         return true;
     }
     catch (const std::exception& e) {
@@ -3588,8 +3641,11 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
         MessageBoxW(hWnd, debugMsg, L"Error", MB_OK | MB_ICONERROR);
         SecureZeroMemory(g_userKeyForXml.data(), g_userKeyForXml.size());
         g_userKeyForXml.clear();
+        LockFiles(); // Re-lock on error
         return false;
     }
+
+    LockFiles(); // Re-lock on error
 }
 
 
@@ -3739,4 +3795,61 @@ INT_PTR CALLBACK ChangePasswordDlgProc(HWND hDlg, UINT message, WPARAM wParam, L
     return (INT_PTR)FALSE;
 }
 
- 
+// Locks data.xml and password.pgp for exclusive access
+bool LockFiles() {
+    std::wstring xmlPath = GetFullFilePath(L"data.xml");
+    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+
+    // Close existing handles if open
+    UnlockFiles();
+
+    // Open data.xml with exclusive access
+    hDataXmlLock = CreateFileW(
+        xmlPath.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0, // No sharing
+        nullptr,
+        OPEN_ALWAYS, // Open or create
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (hDataXmlLock == INVALID_HANDLE_VALUE) {
+        WCHAR errorMsg[256];
+        swprintf_s(errorMsg, L"Failed to lock data.xml: Error %lu", GetLastError());
+        MessageBoxW(nullptr, errorMsg, L"Lock Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Open password.pgp with exclusive access
+    hPasswordPgpLock = CreateFileW(
+        pgpPath.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0, // No sharing
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (hPasswordPgpLock == INVALID_HANDLE_VALUE) {
+        WCHAR errorMsg[256];
+        swprintf_s(errorMsg, L"Failed to lock password.pgp: Error %lu", GetLastError());
+        MessageBoxW(nullptr, errorMsg, L"Lock Error", MB_OK | MB_ICONERROR);
+        CloseHandle(hDataXmlLock);
+        hDataXmlLock = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    return true;
+}
+
+// Unlocks data.xml and password.pgp
+void UnlockFiles() {
+    if (hDataXmlLock != INVALID_HANDLE_VALUE) {
+        CloseHandle(hDataXmlLock);
+        hDataXmlLock = INVALID_HANDLE_VALUE;
+    }
+    if (hPasswordPgpLock != INVALID_HANDLE_VALUE) {
+        CloseHandle(hPasswordPgpLock);
+        hPasswordPgpLock = INVALID_HANDLE_VALUE;
+    }
+}
