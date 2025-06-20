@@ -126,6 +126,11 @@ bool IsValidInput(const std::wstring& input);
 bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const std::wstring& newPassword);
 bool updown = true;
 
+bool SaveFilePathsToRegistry();
+bool RestrictFilePermissions(const std::wstring& filePath, bool restrict);
+bool  RestorePasswordClass(HWND hWnd);
+bool  SavePasswordClassToRegistry(HWND hWnd);
+
 static std::wstring g_enteredPassword; // Added for storing the password from the new dialog
 static bool g_isInVerifyModeNewDialog = false; // To store the mode for the new dialog
 HFONT g_hNoteFont = nullptr;
@@ -531,6 +536,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
 
+    
+
+
     ////////////////////////////////////////////
       //Prevent DLL Injection
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -646,10 +654,18 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         100, 100, 800, 600, HWND_DESKTOP, nullptr, hInstance, nullptr
     );
 
-    LockFiles();
+    
     ////////////////////////////////
     ShowWindow(hWnd, SW_HIDE);
 
+     RestorePasswordClass(hWnd);
+
+    std::wstring xmlPath = GetFullFilePath(L"data.xml");
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
+    RestrictFilePermissions(xmlPath, false);
+    RestrictFilePermissions(pgpPath, false);
+
+    LockFiles();
 
     mini = cEXIST(hWnd);
     if (mini == 0) {
@@ -1143,7 +1159,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_INPUTLANGCHANGE:
         // Prevent screenshots
-        SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
+       // SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
         return TRUE;
 
 
@@ -1194,7 +1210,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 
         // Prevent screenshots from the start
-        SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
+         SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE);
 
 
         ini(hWnd);
@@ -2250,6 +2266,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         KillTrayIcon();
         DestroyWindow(hWnd);
+
+        std::wstring xmlPath = GetFullFilePath(L"data.xml");
+        std::wstring pgpPath = GetFullFilePath(L"password.class");
+        RestrictFilePermissions(xmlPath, true);
+        RestrictFilePermissions(pgpPath, true);
+
+
         return 0;
     }
 
@@ -2508,7 +2531,154 @@ bool SecureDeleteFile(const std::wstring& filePath) {
 }
 
 
+// Constants
+#define MAX_BACKUPS 20 // Maximum number of backup files to keep
+
+// Modified SaveXML function with backup file limiting
 void SaveXML()
+{
+    if (resto == 1) {
+        return; // Skip saving during backup restoration
+    }
+
+    // Unlock files to allow writing
+    UnlockFiles();
+
+    std::wstring xmlPath = GetFullFilePath(L"data.xml");
+    std::wstring tempPath = GetFullFilePath(L"temp_plain.xml");
+
+    // Generate backup filename with current date
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    WCHAR backupFileName[32];
+    swprintf_s(backupFileName, L"Backup-%d-%d-%d.xml", st.wMonth, st.wDay, st.wYear % 100);
+    std::wstring backupPath = GetFullFilePath(backupFileName);
+
+    // Manage backup files to limit their number
+    if (PathFileExistsW(xmlPath.c_str()) && !PathFileExistsW(backupPath.c_str())) {
+        // Collect all backup files
+        std::vector<std::pair<std::wstring, FILETIME>> backupFiles;
+        std::wstring searchPath = GetFullFilePath(L"Backup-*.xml");
+        WIN32_FIND_DATAW findData;
+        HANDLE hFind = FindFirstFileW(searchPath.c_str(), &findData);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                    std::wstring filePath = GetFullFilePath(findData.cFileName);
+                    backupFiles.emplace_back(filePath, findData.ftCreationTime);
+                }
+            } while (FindNextFileW(hFind, &findData));
+            FindClose(hFind);
+        }
+
+        // Sort backups by creation time (oldest first)
+        std::sort(backupFiles.begin(), backupFiles.end(),
+            [](const auto& a, const auto& b) {
+                return CompareFileTime(&a.second, &b.second) < 0;
+            });
+
+        // Delete oldest backups if exceeding MAX_BACKUPS
+        while (backupFiles.size() >= MAX_BACKUPS) {
+            //
+            SecureDeleteFile(backupFiles.front().first);
+            backupFiles.erase(backupFiles.begin());
+        }
+
+        // Create new backup
+        if (!CopyFileW(xmlPath.c_str(), backupPath.c_str(), FALSE)) {
+            // Non-critical, proceed with saving
+            MessageBoxW(nullptr, L"Warning: Failed to create backup.", L"Backup Warning", MB_OK | MB_ICONWARNING);
+        }
+    }
+
+    tinyxml2::XMLDocument doc;
+    tinyxml2::XMLDeclaration* decl = doc.NewDeclaration();
+    doc.InsertFirstChild(decl);
+
+    tinyxml2::XMLElement* root = doc.NewElement("Passwords");
+    doc.InsertEndChild(root);
+
+    for (const auto& entry : entries) {
+        tinyxml2::XMLElement* entryElement = doc.NewElement("Entry");
+
+        auto createTextElement = [&](const char* elementName, std::wstring text) {
+            NormalizeLineEndings(text); // Ensure \r\n before saving
+            tinyxml2::XMLElement* elem = doc.NewElement(elementName);
+            std::string utf8Text = WstringToUtf8(text);
+            elem->SetText(utf8Text.c_str());
+            entryElement->InsertEndChild(elem);
+            };
+
+        createTextElement("Name", entry.name);
+        createTextElement("Website", entry.website);
+        createTextElement("Email", entry.email);
+        createTextElement("User", entry.user);
+        createTextElement("Password", entry.password);
+        createTextElement("Note", entry.note);
+        createTextElement("Category", entry.category);
+        createTextElement("creationDate", entry.creationDate);
+
+        tinyxml2::XMLElement* colorElement = doc.NewElement("Color");
+        colorElement->SetAttribute("R", GetRValue(entry.color));
+        colorElement->SetAttribute("G", GetGValue(entry.color));
+        colorElement->SetAttribute("B", GetBValue(entry.color));
+        entryElement->InsertEndChild(colorElement);
+
+        entryElement->SetAttribute("creationDate", StringToUTF8(entry.creationDate).c_str());
+
+        root->InsertEndChild(entryElement);
+    }
+
+    // Save to temp plain file
+    std::string tempPathUtf8 = WstringToUtf8(tempPath);
+    if (doc.SaveFile(tempPathUtf8.c_str()) != tinyxml2::XML_SUCCESS) {
+        MessageBoxW(nullptr, L"Failed to save temporary XML data. Data not saved.", L"Save Error", MB_OK | MB_ICONERROR);
+        SecureDeleteFile(tempPath.c_str());
+        LockFiles();
+        return;
+    }
+
+    // Decrypt g_userKeyForXml
+    std::vector<BYTE> tempKey = g_userKeyForXml;
+    if (!tempKey.empty()) {
+        DWORD cbData = static_cast<DWORD>(tempKey.size());
+        if (!CryptUnprotectMemory(tempKey.data(), cbData, CRYPTPROTECTMEMORY_SAME_PROCESS)) {
+            MessageBoxW(nullptr, L"Failed to decrypt key in memory.", L"Encryption Error", MB_OK | MB_ICONERROR);
+            SecureDeleteFile(tempPath.c_str());
+            SecureZeroMemory(tempKey.data(), tempKey.size());
+            tempKey.clear();
+            LockFiles();
+            return;
+        }
+
+        // Encrypt temp file to final data.xml
+        if (!EncryptFile(tempPath, xmlPath, std::wstring(tempKey.begin(), tempKey.end()))) {
+            MessageBoxW(nullptr, L"Failed to encrypt XML data. Data not saved.", L"Encryption Error", MB_OK | MB_ICONERROR);
+            SecureDeleteFile(tempPath.c_str());
+            SecureZeroMemory(tempKey.data(), tempKey.size());
+            tempKey.clear();
+            LockFiles();
+            return;
+        }
+
+        // Clean up tempKey
+        SecureZeroMemory(tempKey.data(), tempKey.size());
+        tempKey.clear();
+    }
+    else {
+        MessageBoxW(nullptr, L"User key not available for encryption. Data not saved.", L"Key Error", MB_OK | MB_ICONERROR);
+        SecureDeleteFile(tempPath.c_str());
+        LockFiles();
+        return;
+    }
+
+    // Clean up temp plain file
+    SecureDeleteFile(tempPath.c_str());
+    LockFiles();
+}
+
+
+void SaveXML2()
 {
     if (resto == 1) {
         return; // Skip saving during backup restoration
@@ -2645,17 +2815,7 @@ VOID CALLBACK ClearClipboardTimerProc(HWND hWnd, UINT uMsg, UINT_PTR idEvent, DW
 void CopyToClipboard(HWND hWnd, const std::wstring& text) {
 
 
-    std::wofstream debugLog(GetFullFilePath(L"debug_clipboard.txt"), std::ios::app);
-    if (debugLog.is_open()) {
-        debugLog << L"--- Clipboard Copy ---\n";
-        for (wchar_t c : text) {
-            if (c == L'\r') debugLog << L"\\r";
-            else if (c == L'\n') debugLog << L"\\n";
-            else debugLog << c;
-        }
-        debugLog << L"\n---\n";
-        debugLog.close();
-    }
+  
 
     if (OpenClipboard(hWnd)) {
         EmptyClipboard();
@@ -2726,7 +2886,7 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
 
     case WM_INPUTLANGCHANGE:
         // Prevent screenshots
-        SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
+         SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
         return TRUE;
 
     case WM_INITDIALOG:
@@ -2734,7 +2894,7 @@ INT_PTR CALLBACK PasswordDialogProcNew(HWND hDlg, UINT message, WPARAM wParam, L
         if (isDarkTheme && hEditBrush == NULL) {
             hEditBrush = CreateSolidBrush(RGB(50, 50, 50));
         }
-        std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+        std::wstring pgpPath = GetFullFilePath(L"password.class");
         g_isInVerifyModeNewDialog = PathFileExistsW(pgpPath.c_str());
         SetWindowTextW(hDlg, g_isInVerifyModeNewDialog ? L"Verify Password" : L"Create New Password");
         HWND hwndParent = GetParent(hDlg) ? GetParent(hDlg) : GetDesktopWindow();
@@ -2857,7 +3017,7 @@ int cEXIST(HWND hWnd)
     SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
 
     UnlockFiles();
-    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
     bool fileExists = PathFileExistsW(pgpPath.c_str());
 
     while (true)
@@ -2950,6 +3110,8 @@ int cEXIST(HWND hWnd)
                             }
                         }
 
+
+                        SavePasswordClassToRegistry(hWnd);
                         SecureZeroMemory(&tempPassword[0], tempPassword.size() * sizeof(wchar_t));
                         tempPassword.clear();
                         LockFiles();
@@ -3151,7 +3313,7 @@ INT_PTR CALLBACK AboutNewDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
     case WM_INITDIALOG:
     {
         // Prevent screenshots
-        //SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
+        SetWindowDisplayAffinity(hDlg, WDA_EXCLUDEFROMCAPTURE);
 
 
 
@@ -3556,7 +3718,7 @@ bool ChangeMasterPassword(HWND hWnd, const std::wstring& currentPassword, const 
     UnlockFiles();
 
 
-    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
 
     // Verify current password
     std::ifstream inFile(pgpPath, std::ios::binary);
@@ -3725,6 +3887,7 @@ INT_PTR CALLBACK ChangePasswordDlgProc(HWND hDlg, UINT message, WPARAM wParam, L
             }
 
             if (ChangeMasterPassword(hDlg, currentPassword, newPassword)) {
+                SavePasswordClassToRegistry(hDlg);
                 EndDialog(hDlg, IDOK);
             }
             return (INT_PTR)TRUE;
@@ -3798,7 +3961,7 @@ INT_PTR CALLBACK ChangePasswordDlgProc(HWND hDlg, UINT message, WPARAM wParam, L
 // Locks data.xml and password.pgp for exclusive access
 bool LockFiles() {
     std::wstring xmlPath = GetFullFilePath(L"data.xml");
-    std::wstring pgpPath = GetFullFilePath(L"password.pgp");
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
 
     // Close existing handles if open
     UnlockFiles();
@@ -3832,7 +3995,7 @@ bool LockFiles() {
     );
     if (hPasswordPgpLock == INVALID_HANDLE_VALUE) {
         WCHAR errorMsg[256];
-        swprintf_s(errorMsg, L"Failed to lock password.pgp: Error %lu", GetLastError());
+        swprintf_s(errorMsg, L"Failed to lock password.class: Error %lu", GetLastError());
         MessageBoxW(nullptr, errorMsg, L"Lock Error", MB_OK | MB_ICONERROR);
         CloseHandle(hDataXmlLock);
         hDataXmlLock = INVALID_HANDLE_VALUE;
@@ -3853,3 +4016,323 @@ void UnlockFiles() {
         hPasswordPgpLock = INVALID_HANDLE_VALUE;
     }
 }
+
+
+
+
+// Save file paths to Registry
+bool SaveFilePathsToRegistry() {
+    HKEY hKey;
+    LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, KEY_SET_VALUE, &hKey);
+    if (result != ERROR_SUCCESS) {
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, nullptr, REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE, nullptr, &hKey, nullptr);
+    }
+
+    if (result == ERROR_SUCCESS) {
+        std::wstring xmlPath = GetFullFilePath(L"data.xml");
+        std::wstring pgpPath = GetFullFilePath(L"password.class");
+
+        RegSetValueExW(hKey, L"DataXmlPath", 0, REG_SZ, (const BYTE*)xmlPath.c_str(),
+            (xmlPath.size() + 1) * sizeof(wchar_t));
+        RegSetValueExW(hKey, L"PasswordPgpPath", 0, REG_SZ, (const BYTE*)pgpPath.c_str(),
+            (pgpPath.size() + 1) * sizeof(wchar_t));
+
+        RegCloseKey(hKey);
+        return true;
+    }
+    else {
+        WCHAR errorMsg[256];
+        swprintf_s(errorMsg, L"Failed to save file paths to Registry: Error %ld", result);
+        MessageBoxW(nullptr, errorMsg, L"Registry Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+}
+
+// Restrict or restore permissions and hide/unhide a file
+bool RestrictFilePermissions(const std::wstring& filePath, bool restrict) {
+    if (!PathFileExistsW(filePath.c_str())) {
+        return true; // File doesn't exist yet, no action needed
+    }
+
+    if (restrict) {
+        // Get current user's SID
+        HANDLE hToken;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to open process token: Error %lu", GetLastError());
+            MessageBoxW(nullptr, errorMsg, L"Permission Error", MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        DWORD tokenInfoSize = 0;
+        GetTokenInformation(hToken, TokenUser, nullptr, 0, &tokenInfoSize);
+        std::vector<BYTE> tokenInfo(tokenInfoSize);
+        PTOKEN_USER pTokenUser = (PTOKEN_USER)tokenInfo.data();
+        if (!GetTokenInformation(hToken, TokenUser, pTokenUser, tokenInfoSize, &tokenInfoSize)) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to get token information: Error %lu", GetLastError());
+            MessageBoxW(nullptr, errorMsg, L"Permission Error", MB_OK | MB_ICONERROR);
+            CloseHandle(hToken);
+            return false;
+        }
+
+        // Create security descriptor
+        SECURITY_DESCRIPTOR sd;
+        if (!InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        // Create DACL
+        DWORD aclSize = sizeof(ACL) + 2 * (sizeof(ACCESS_ALLOWED_ACE) + GetLengthSid(pTokenUser->User.Sid)) +
+            sizeof(ACCESS_DENIED_ACE) + GetLengthSid(pTokenUser->User.Sid);
+        std::vector<BYTE> aclBuffer(aclSize);
+        PACL pAcl = (PACL)aclBuffer.data();
+        if (!InitializeAcl(pAcl, aclSize, ACL_REVISION)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        // Deny read/write to Everyone
+        SID_IDENTIFIER_AUTHORITY sidAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
+        PSID everyoneSid = nullptr;
+        if (!AllocateAndInitializeSid(&sidAuthWorld, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, &everyoneSid)) {
+            CloseHandle(hToken);
+            return false;
+        }
+        if (!AddAccessDeniedAce(pAcl, ACL_REVISION, FILE_READ_DATA | FILE_WRITE_DATA, everyoneSid)) {
+            FreeSid(everyoneSid);
+            CloseHandle(hToken);
+            return false;
+        }
+
+        // Grant full access to current user
+        if (!AddAccessAllowedAce(pAcl, ACL_REVISION, FILE_ALL_ACCESS, pTokenUser->User.Sid)) {
+            FreeSid(everyoneSid);
+            CloseHandle(hToken);
+            return false;
+        }
+
+        if (!SetSecurityDescriptorDacl(&sd, TRUE, pAcl, FALSE)) {
+            FreeSid(everyoneSid);
+            CloseHandle(hToken);
+            return false;
+        }
+
+        // Apply security descriptor
+        SECURITY_INFORMATION si = DACL_SECURITY_INFORMATION;
+        if (!SetFileSecurityW(filePath.c_str(), si, &sd)) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to set file security: Error %lu", GetLastError());
+            MessageBoxW(nullptr, errorMsg, L"Permission Error", MB_OK | MB_ICONERROR);
+            FreeSid(everyoneSid);
+            CloseHandle(hToken);
+            return false;
+        }
+
+        FreeSid(everyoneSid);
+        CloseHandle(hToken);
+
+        // Hide file
+        if (!SetFileAttributesW(filePath.c_str(), FILE_ATTRIBUTE_HIDDEN)) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to hide file: Error %lu", GetLastError());
+            MessageBoxW(nullptr, errorMsg, L"Hide Error", MB_OK | MB_ICONERROR);
+            return false;
+        }
+    }
+    else {
+        // Restore default permissions (reset DACL to inherited)
+        SECURITY_DESCRIPTOR sd;
+        if (!InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION)) {
+            return false;
+        }
+
+        if (!SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE)) {
+            return false;
+        }
+
+        SECURITY_INFORMATION si = DACL_SECURITY_INFORMATION;
+        if (!SetFileSecurityW(filePath.c_str(), si, &sd)) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to reset file security: Error %lu", GetLastError());
+            MessageBoxW(nullptr, errorMsg, L"Permission Error", MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        // Unhide file (remove hidden attribute)
+        DWORD attributes = GetFileAttributesW(filePath.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES) {
+            if (!SetFileAttributesW(filePath.c_str(), attributes & ~FILE_ATTRIBUTE_HIDDEN)) {
+                WCHAR errorMsg[256];
+                swprintf_s(errorMsg, L"Failed to unhide file: Error %lu", GetLastError());
+                MessageBoxW(nullptr, errorMsg, L"Hide Error", MB_OK | MB_ICONERROR);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+
+
+
+bool RestorePasswordClass(HWND hWnd) {
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
+    std::wstring xmlPath = GetFullFilePath(L"data.xml");
+    HKEY hKey;
+    bool success = false;
+
+    UnlockFiles();
+    // Check if data.xml exists and has size > 0
+    HANDLE hDataFile = CreateFileW(xmlPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hDataFile == INVALID_HANDLE_VALUE) {
+        LockFiles();
+        return false; // data.xml does not exist
+    }
+    LARGE_INTEGER fileSize;
+    if (!GetFileSizeEx(hDataFile, &fileSize) || fileSize.QuadPart == 0) {
+        CloseHandle(hDataFile);
+        LockFiles();
+        return false; // data.xml is empty or inaccessible
+    }
+    CloseHandle(hDataFile);
+
+    // Check if password.class is missing
+    bool fileExists = PathFileExistsW(pgpPath.c_str());
+    if (fileExists) {
+        LockFiles();
+        return false; // password.class exists, no action needed
+    }
+
+    // password.class is missing, ask user to restore
+    int choice = MessageBoxW(hWnd, L"password  is missing, \nRestore the previous password from backup? \n(***[No] will delete ALL***.)",
+        L"Restore Backup", MB_YESNO | MB_ICONQUESTION);
+    if (choice == IDYES) {
+        // Open Registry key
+        LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, KEY_QUERY_VALUE, &hKey);
+        if (result != ERROR_SUCCESS) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to open Registry key: Error %ld", result);
+            MessageBoxW(hWnd, errorMsg, L"Registry Error", MB_OK | MB_ICONERROR);
+            LockFiles();
+            return false;
+        }
+
+        // Check if backup exists in Registry
+        DWORD dataSize = 0;
+        result = RegQueryValueExW(hKey, L"PasswordClassBackup", nullptr, nullptr, nullptr, &dataSize);
+        if (result != ERROR_SUCCESS || dataSize < SALT_LENGTH + KEY_LENGTH) {
+            RegCloseKey(hKey);
+            MessageBoxW(hWnd, L"No valid backup found in Registry.", L"Error", MB_OK | MB_ICONERROR);
+            LockFiles();
+            return false;
+        }
+
+        // Read backup data
+        std::vector<BYTE> backupData(dataSize);
+        result = RegQueryValueExW(hKey, L"PasswordClassBackup", nullptr, nullptr, backupData.data(), &dataSize);
+        if (result != ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to read backup from Registry: Error %ld", result);
+            MessageBoxW(hWnd, errorMsg, L"Registry Error", MB_OK | MB_ICONERROR);
+            LockFiles();
+            return false;
+        }
+
+        // Restore password.class from Registry data
+        std::ofstream outFile(pgpPath, std::ios::binary);
+        if (!outFile.is_open()) {
+            RegCloseKey(hKey);
+            MessageBoxW(hWnd, L"Failed to create password.class.", L"Error", MB_OK | MB_ICONERROR);
+            LockFiles();
+            return false;
+        }
+        outFile.write(reinterpret_cast<const char*>(backupData.data()), backupData.size());
+        outFile.close();
+
+        RegCloseKey(hKey);
+        success = true;
+    }
+    else {
+        // User chose No, delete data.xml and Registry backup
+        if (!DeleteFileW(xmlPath.c_str())) {
+            WCHAR errorMsg[256];
+            swprintf_s(errorMsg, L"Failed to delete data.xml: Error %ld", GetLastError());
+            MessageBoxW(hWnd, errorMsg, L"Error", MB_OK | MB_ICONERROR);
+        }
+
+        // Delete Registry backup
+        LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, KEY_SET_VALUE, &hKey);
+        if (result == ERROR_SUCCESS) {
+            RegDeleteValueW(hKey, L"PasswordClassBackup");
+            RegCloseKey(hKey);
+        }
+        success = true; // Allow program to continue
+    }
+
+    LockFiles();
+    return success;
+}
+
+
+bool SavePasswordClassToRegistry(HWND hWnd) {
+
+    UnlockFiles();
+    std::wstring pgpPath = GetFullFilePath(L"password.class");
+    HKEY hKey;
+    bool success = false;
+
+    // Check if password.class exists
+    if (!PathFileExistsW(pgpPath.c_str())) {
+        MessageBoxW(hWnd, L"password.class file does not exist. Cannot save to Registry.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Read password.class contents
+    std::ifstream inFile(pgpPath, std::ios::binary);
+    if (!inFile.is_open()) {
+        MessageBoxW(hWnd, L"Failed to read password.class for backup.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    std::vector<BYTE> fileData((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+    inFile.close();
+
+    // Validate file size
+    if (fileData.size() < SALT_LENGTH + KEY_LENGTH) {
+        MessageBoxW(hWnd, L"Corrupted password.class file. Cannot save to Registry.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Open or create Registry key
+    LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, KEY_SET_VALUE, &hKey);
+    if (result != ERROR_SUCCESS) {
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Pwrd", 0, nullptr, REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE, nullptr, &hKey, nullptr);
+    }
+    if (result != ERROR_SUCCESS) {
+        WCHAR errorMsg[256];
+        swprintf_s(errorMsg, L"Failed to open or create Registry key: Error %ld", result);
+        MessageBoxW(hWnd, errorMsg, L"Registry Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Save data to Registry
+    result = RegSetValueExW(hKey, L"PasswordClassBackup", 0, REG_BINARY, fileData.data(), fileData.size());
+    if (result == ERROR_SUCCESS) {
+        success = true;
+    }
+    else {
+        WCHAR errorMsg[256];
+        swprintf_s(errorMsg, L"Failed to save backup to Registry: Error %ld", result);
+        MessageBoxW(hWnd, errorMsg, L"Registry Error", MB_OK | MB_ICONERROR);
+    }
+
+    RegCloseKey(hKey);
+    LockFiles();
+    return success;
+}
+
